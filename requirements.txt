@@ -1,4 +1,5 @@
 av
+opencv-python>=4.8
 rapidocr-onnxruntime
 fastapi
 uvicorn[standard]

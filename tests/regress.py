@@ -99,12 +99,12 @@ def check_video(vid):
     n_child, n_exp = len(truth["child"]), len(truth["experimenter"])
     child = scored[0] if scored else (0, 0, None)
     exp = max(((hits(p["id"], "experimenter"), p) for p in people if p is not child[2]), key=lambda x: x[0], default=(0, None))
-    auto = timeline.pick_child(people, truth["experimenter_names"])
+    auto = timeline.decide(people, truth["experimenter_names"])
     name = child[2]["name"] if child[2] else "-"
     vis = timeline.summarize(tl[child[2]["id"]])["visible_pct"] if child[2] else 0
     print(f"{vid}: {len(people)} people; child={name!r} right {child[0]}/{n_child} visible {vis}%, "
           f"contaminated {child[1]}/{n_exp}; experimenter found {exp[0]}/{n_exp}"
-          f"{' as ' + repr(exp[1]['name']) if exp[1] else ''}; auto-pick {auto}; "
+          f"{' as ' + repr(exp[1]['name']) if exp[1] else ''}; auto-pick {auto['pid']} {auto['notice']!r}; "
           f"took {res.get('took', '?')}s, {res['stats']}")
     if truth["child_name"] and child[2] and child[2]["name"] != truth["child_name"]:
         print(f"  child should be named {truth['child_name']!r}")
@@ -112,6 +112,29 @@ def check_video(vid):
         bx = box_at(tl[child[2]["id"]], t) if child[2] else None
         if bx is None or iou(bx, b) < 0.6:
             print(f"  child wrong at t={t}: truth {b}, got {bx}")
+    # The same with the experimenter known (as it is once they are remembered by name or
+    # face): the child's window is then also taken by elimination where the child was
+    # not recognised in it. This must gain visibility without picking up the experimenter.
+    if child[2] and exp[1]:
+        ex_pid = exp[1]["id"]
+        segs = timeline.build(res, child[2]["id"], None, {ex_pid})
+        sm = timeline.summarize(segs)
+        right = sum(1 for t, b in truth["child"] if (bx := box_at(segs, t)) is not None and iou(bx, b) >= 0.6)
+        bad = sum(1 for t, b in truth["experimenter"] if (bx := box_at(segs, t)) is not None and iou(bx, b) >= 0.6)
+        held = sum(s["end"] - s["start"] for s in segs if "held" in s["flags"])
+        inferred = sum(s["end"] - s["start"] for s in segs if "inferred" in s["flags"])
+        print(f"  with experimenter known: right {right}/{n_child} visible {sm['visible_pct']}%, contaminated {bad}/{n_exp}, "
+              f"to check {sm['review_n']} spans {sm['review_s']}s; inferred {inferred:.1f}s, held {held:.1f}s; "
+              f"auto-pick {timeline.decide([dict(p, experimenter=p['id'] == ex_pid) for p in people], [])}")
+        for t, b in truth["child"]:
+            bx = box_at(segs, t)
+            if bx is None or iou(bx, b) < 0.6:
+                print(f"    child wrong at t={t}: truth {b}, got {bx}")
+        for t, b in truth["experimenter"]:
+            bx = box_at(segs, t)
+            if bx is not None and iou(bx, b) >= 0.6:
+                print(f"    experimenter cropped at t={t}: {bx}")
+        return right, n_child, bad
     return child[0], n_child, child[1]
 
 

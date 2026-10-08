@@ -63,7 +63,7 @@ REFINE_MAX = 6       # frames looked at between two samples while a window is be
 MAX_TILES = 24       # candidate boxes kept per frame (busy slides yield dozens of useless ones)
 OCR_MIN_W = 0.1      # a box narrower than this share of the frame is not a video tile worth reading
 MIN_SHARE = 0.03     # a person must be on screen this share of the video to be listed
-MIN_SHARE_NOFACE = 0.05  # ... and more when no face was ever seen in it while others showed one
+MIN_SHARE_NOFACE = 0.15  # ... and more when no face was ever seen in it while others showed one
 
 
 class Cancelled(Exception):
@@ -767,13 +767,27 @@ class Analyzer:
             elif view is not None and _save_view(path, view.t, view.box, thumb_dir / f"p{p['id']}.jpg"):
                 p["thumb"] = f"p{p['id']}.jpg"
 
+        # Windows that show live video but could not be given to anyone go out too, marked
+        # as such: the timeline uses them when the child's own window was not recognised
+        # (face covered) but the other windows on screen are accounted for.
+        live_tid = {tr.id: tr.live or (tr.pairs >= 2 and tr.active >= LIVE_RATIO * tr.pairs) or tr.chain >= 0
+                    for tr in self.all_tracks}
         out_samples = []
         for t, obs in samples:
-            tiles = [{"box": list(o.box), "pid": o.pid, "src": o.src, "clip": o.clip, "cut": o.cut,
-                      "flat": o.flat, "score": round(o.score, 2)} for o in obs if o.pid is not None]
+            known = [o for o in obs if o.pid is not None]
+            extra = []
+            for o in obs:
+                if o.pid is not None or o.name or not live_tid.get(o.tid, False):
+                    continue
+                if any(_inside(o.box, q.box) or iou(o.box, q.box) >= 0.5 for q in known + extra):
+                    continue  # the same window measured again, or a piece of it
+                extra.append(o)
+            tiles = [{"box": list(o.box), "pid": o.pid, "tid": o.tid, "src": o.src, "clip": o.clip, "cut": o.cut,
+                      "flat": o.flat, "score": round(o.score, 2), "live": bool(live_tid.get(o.tid, False))}
+                     for o in known + extra]
             out_samples.append({"t": round(t, 4), "tiles": tiles})
         return {
-            "version": 3,
+            "version": 4,
             "video": {"width": W, "height": H, "fps": fps, "duration": duration, "frames": n},
             "participants": participants,
             "samples": out_samples,

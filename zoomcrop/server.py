@@ -61,9 +61,11 @@ jobs: dict[str, dict] = {}
 cancels: dict[str, threading.Event] = {}
 tasks: queue.Queue = queue.Queue()
 settings: dict = dict(DEFAULT_SETTINGS)
-# face descriptions of the people in each analysed video, by participant id; kept in memory
-# only, so nothing about a child is written anywhere
+# Face descriptions of the people in each analysed video, by participant id. They sit in
+# the job's folder (faces.json) until the child is chosen, so that an experimenter can
+# still be remembered by face after a restart; the child's are deleted at that moment.
 job_faces: dict[str, dict[int, list]] = {}
+FACES_FILE = "faces.json"
 
 
 # -- persistence -----------------------------------------------------------
@@ -125,7 +127,7 @@ def new_job(src: Path, origin: str) -> dict:
         "src": str(src), "origin": origin, "status": "queued", "progress": 0.0, "error": "",
         "created": time.time(), "child_pid": None, "child_name": "", "participants": [],
         "video": None, "summary": None, "output": "", "overrides": [], "rev": 0, "took": {},
-        "reviewed": False, "started": None, "exported": None, "render": None,
+        "reviewed": False, "started": None, "exported": None, "render": None, "notice": "",
     }
     with lock:
         jobs[job["id"]] = job
@@ -149,8 +151,64 @@ def set_status(job: dict, status: str, **extra):
         save_job(job)
 
 
-def resolve_child(job: dict) -> int | None:
-    return timeline.pick_child(job["participants"], settings["experimenters"])
+def faces_of(jid: str) -> dict[int, list]:
+    if jid not in job_faces:
+        out: dict[int, list] = {}
+        try:
+            data = read_json(JOBDIR / jid / FACES_FILE)
+            if data.get("model") == FaceReader.MODEL:
+                out = {int(k): v for k, v in data.get("faces", {}).items()}
+        except (OSError, ValueError, AttributeError):
+            pass
+        job_faces[jid] = out
+    return job_faces[jid]
+
+
+def save_faces(jid: str, faces: dict[int, list]):
+    job_faces[jid] = faces
+    f = JOBDIR / jid / FACES_FILE
+    if faces:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"model": FaceReader.MODEL, "faces": {str(k): v for k, v in faces.items()}}),
+                     encoding="utf-8")
+    else:
+        f.unlink(missing_ok=True)
+
+
+def drop_child_faces(job: dict):
+    """The person being cropped is a child: nothing about their face is kept."""
+    faces = faces_of(job["id"])
+    if job.get("child_pid") in faces:
+        save_faces(job["id"], {k: v for k, v in faces.items() if k != job["child_pid"]})
+
+
+def link_named_faces(job: dict) -> bool:
+    """An experimenter known by name whose face was seen: remember the face under that
+    name, so that recordings without name labels recognise them too."""
+    faces = faces_of(job["id"])
+    changed = False
+    for p in job["participants"]:
+        if p.get("anon") or p["id"] == job.get("child_pid") or len(faces.get(p["id"], [])) < FACE_MIN_VOTES:
+            continue
+        if any(names_match(p["name"], e) for e in settings["experimenters"]):
+            remember_face(p["name"], faces[p["id"]])
+            changed = True
+    return changed
+
+
+def settle(job: dict, queue_render: bool = True) -> bool:
+    """Decide who to crop without asking, if the rule allows it; queue the render then."""
+    d = timeline.decide(job["participants"], settings["experimenters"])
+    job["notice"] = d["notice"]
+    if d["pid"] is None:
+        return False
+    job["child_pid"] = d["pid"]
+    if link_named_faces(job):
+        save_settings()
+    drop_child_faces(job)
+    if queue_render:
+        enqueue(job, "render")
+    return True
 
 
 def _cos(a, b) -> float:
@@ -162,7 +220,7 @@ def _cos(a, b) -> float:
 def apply_known_faces(job: dict) -> bool:
     """Mark participants whose face matches a remembered experimenter. Used when the
     list of remembered faces changes after a video was analysed."""
-    vectors = job_faces.get(job["id"]) or {}
+    vectors = faces_of(job["id"])
     changed = False
     for p in job["participants"]:
         if p.get("experimenter") or not p.get("anon") or p["id"] not in vectors:
@@ -213,22 +271,23 @@ def worker():
                 t0 = time.time()
                 an = Analyzer(reader, known_faces=settings.get("known_faces"))
                 res = an.run(job["src"], thumb_dir=jdir, progress=progress, cancel=cancel.is_set)
-                job_faces[jid] = an.face_vectors
+                save_faces(jid, an.face_vectors)
                 (jdir / "analysis.json").write_text(json.dumps(res), encoding="utf-8")
                 job["took"]["analyze"] = round(time.time() - t0, 1)
                 job["participants"] = res["participants"]
                 job["video"] = res["video"]
-                pid = resolve_child(job)
-                if pid is None:
+                with lock:
+                    settled = settle(job, queue_render=False)
+                if not settled:
                     set_status(job, "choose", progress=1.0)
                     continue
-                job["child_pid"] = pid
                 task = "render"
             if task == "render":
                 analysis = read_json(jdir / "analysis.json")
                 pid = job["child_pid"]
                 job["child_name"] = next((p["name"] for p in job["participants"] if p["id"] == pid), "")
-                segs = timeline.build(analysis, pid, job["overrides"])
+                segs = timeline.build(analysis, pid, job["overrides"],
+                                      timeline.experimenter_ids(job["participants"], settings["experimenters"]))
                 set_status(job, "rendering", progress=0.0, error="", started=time.time())
                 t0 = time.time()
                 # The result stays in the workspace for review; nothing is written
@@ -250,7 +309,7 @@ def worker():
 def public(job: dict) -> dict:
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "participants", "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported")
+            "reviewed", "started", "exported", "notice")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     return out
@@ -320,6 +379,7 @@ def job_detail(jid: str):
     out["segments"] = read_json(seg_file) if seg_file.exists() else []
     out["overrides"] = job["overrides"]
     out["flag_text"] = timeline.FLAG_TEXT
+    out["notice_text"] = " ".join(timeline.NOTICE_TEXT.get(k, k) for k in (job.get("notice") or "").split())
     return out
 
 
@@ -334,6 +394,7 @@ async def choose_child(jid: str, request: Request):
         raise HTTPException(409, "analysis not finished")
     with lock:
         job["child_pid"] = pid
+        job["notice"] = ""  # the user decided
         # Only names the page listed explicitly are remembered as experimenters, and never
         # the person being cropped: picking someone must not silently relabel anyone.
         chosen = next((p["name"] for p in job["participants"] if p["id"] == pid), "")
@@ -342,26 +403,29 @@ async def choose_child(jid: str, request: Request):
                     and not any(names_match(name, e) for e in settings["experimenters"]):
                 settings["experimenters"].append(name)
         # people without a name label can be remembered by face instead; never the child
+        faces = faces_of(jid)
         for item in body.get("remember_faces", []):
             fpid = int(item.get("pid", -1))
-            vectors = (job_faces.get(jid) or {}).get(fpid)
-            if fpid != pid and vectors and any(p["id"] == fpid for p in job["participants"]):
-                remember_face(str(item.get("name", "")), vectors)
-                for p in job["participants"]:
-                    if p["id"] == fpid:
-                        p["experimenter"], p["name"] = True, str(item.get("name", "")).strip() or p["name"]
+            vectors = faces.get(fpid)
+            if fpid == pid or not any(p["id"] == fpid for p in job["participants"]):
+                continue
+            if not vectors:
+                raise HTTPException(409, "The face descriptions for this video are no longer available. "
+                                         "Re-analyze it to remember this person by face.")
+            remember_face(str(item.get("name", "")), vectors)
+            for p in job["participants"]:
+                if p["id"] == fpid:
+                    p["experimenter"], p["name"] = True, str(item.get("name", "")).strip() or p["name"]
+        link_named_faces(job)  # a named experimenter's face goes with the name
+        drop_child_faces(job)
         save_settings()
         enqueue(job, "render")
         save_job(job)
         for other in jobs.values():
             if other["status"] == "choose" and other is not job:
-                if apply_known_faces(other):
-                    save_job(other)
-                opid = resolve_child(other)
-                if opid is not None:
-                    other["child_pid"] = opid
-                    enqueue(other, "render")
-                    save_job(other)
+                apply_known_faces(other)
+                settle(other)
+                save_job(other)
     return public(job)
 
 
@@ -530,6 +594,7 @@ def retry(jid: str):
     with lock:
         job["child_pid"] = None
         job["overrides"] = []
+        job["notice"] = ""
         enqueue(job, "analyze")
         save_job(job)
     return public(job)
@@ -541,6 +606,7 @@ def delete_job(jid: str):
     with lock:
         cancels[jid].set()
         jobs.pop(jid, None)
+        job_faces.pop(jid, None)
     # Working files only: the analysis cache, the preview render and, for uploads, our
     # own copy. Source videos added by path and anything already exported are left alone.
     shutil.rmtree(JOBDIR / jid, ignore_errors=True)
@@ -586,15 +652,17 @@ async def update_settings(request: Request):
             settings["experimenters"] = [str(s).strip() for s in body["experimenters"] if str(s).strip()]
         if "forget_face" in body:
             settings["known_faces"] = [e for e in settings["known_faces"] if e["name"] != body["forget_face"]]
+            for job in jobs.values():  # people recognised through that face are unknown again
+                for p in job["participants"]:
+                    if p.get("experimenter") and p.get("anon") and names_match(p["name"], body["forget_face"]):
+                        p["experimenter"] = False
+                save_job(job)
         if "out_height" in body:
             settings["out_height"] = max(120, min(1080, int(body["out_height"]))) & ~1
         save_settings()
         # a new experimenter list may settle videos that were waiting for a choice
         for job in jobs.values():
             if job["status"] == "choose":
-                pid = resolve_child(job)
-                if pid is not None:
-                    job["child_pid"] = pid
-                    enqueue(job, "render")
-                    save_job(job)
+                settle(job)
+                save_job(job)
     return public_settings()

@@ -112,6 +112,7 @@ main:focus { outline: none; }
 .titlebar h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
 .who { color: var(--muted); } .who b { color: var(--text); }
 .facts { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.notice { margin: 0 0 12px; padding: 8px 12px; border-radius: 7px; background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-fill); }
 .facts div { display: flex; gap: 6px; align-items: baseline; }
 .facts dt { margin: 0; } .facts dd { margin: 0; color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
 .facts dd.attn { color: var(--warn); }
@@ -316,7 +317,7 @@ async function busy(btn, fn) {
 }
 
 const S = { jobs: [], settings: {}, sel: null, shown: "", uploads: [], picking: false, filter: "all", clock: 0 };
-const REVIEW = new Set(["filled", "look", "camera_off"]);
+const REVIEW = new Set(["filled", "held", "unsure", "look", "camera_off"]);
 const UNSAVED = "You have manual fixes that are not applied yet. They will be lost if you leave. Leave anyway?";
 const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "missing" ? "miss" : s.flags.some(f => REVIEW.has(f)) ? "warn" : "ok";
 const isBusy = j => j.status === "analyzing" || j.status === "rendering";
@@ -339,6 +340,7 @@ function chip(j) {
     if ((j.summary?.visible_pct ?? 100) < 50) return ["Mostly empty", "err"];
     if (exportState(j) === "current") return ["Exported", "rev"];
     if (exportState(j) === "stale") return ["Changed since export", "flag"];
+    if (j.notice && !j.reviewed) return ["Check who was cropped", "flag"];
     return j.reviewed ? ["Reviewed", "rev"] : j.summary?.review_n ? [`${j.summary.review_n} to check`, "flag"] : ["Ready to review", "done"];
   }
   return {queued: ["Queued", "wait"], analyzing: ["Analyzing", "run"], rendering: ["Exporting", "run"], choose: ["Choose child", "ask"], error: ["Failed", "err"]}[j.status] || [j.status, "wait"];
@@ -418,7 +420,7 @@ function refreshMain() {
 const emptyHtml = () => `<div class="empty"><h2>Crop the child's video out of Zoom screen recordings</h2>
   <ol><li>Drop Zoom recordings on the left. You can drop many at once, or a whole folder.</li>
   <li>The tool follows the video tile as it moves and resizes, and tells people apart by the name label in the tile's corner, or by face when the recording shows no labels.</li>
-  <li>The first time, it asks you which person is the child. Once it knows the experimenters' names, later videos run on their own.</li>
+  <li>The first time, it asks you which person is the child and remembers the other person as an experimenter, by name or by face. From then on, whoever is left once the experimenters are taken out is the child; it only asks again when a third person shows up.</li>
   <li>When a video is done, play it back next to the original, check the spans marked on the timeline, then mark it as reviewed.</li>
   <li>Nothing is saved outside this tool until you click Export and choose a folder.</li></ol></div>`;
 
@@ -473,9 +475,13 @@ function showChoose(j) {
   const staffBox = `<div class="staffbox"><p>${staff.length || faces.length ? "Remembered as experimenters (skipped without asking in later videos):" : "No one is remembered as an experimenter yet, so every video with more than one person will ask."}</p>
     <ul class="stafflist">${staff.map(n => `<li>${esc(n)}<button class="ghost danger" data-unstaff="${esc(n)}" aria-label="Stop treating ${esc(n)} as an experimenter" title="Remove from the list">×</button></li>`).join("")}
     ${faces.map(f => `<li>${esc(f.name)} <span class="muted">(by face)</span><button class="ghost danger" data-unface="${esc(f.name)}" aria-label="Forget ${esc(f.name)}'s face" title="Forget this face">×</button></li>`).join("")}</ul></div>`;
-  // people with no label but a visible face can be remembered by face; the name is for the list only
-  const faceBox = !changing && byLook.filter(p => p.face && !p.experimenter).length && ps.length > 1 ? `<div class="facebox"><p>Remember the other person by face, so later videos with them do not ask:</p>
-    ${byLook.filter(p => p.face && !p.experimenter).map(p => `<label class="check faceopt" data-fpid="${p.id}"><input type="checkbox" class="faceck"> ${esc(p.name)} as experimenter named <input type="text" class="facename" placeholder="e.g. Sam" maxlength="40"></label>`).join("")}
+  // people with no label but a visible face can be remembered by face; the name links the
+  // face to the experimenter list (registered names are offered, any other name works too)
+  const faceable = byLook.filter(p => p.face && !p.experimenter);
+  const names = [...new Set([...staff, ...faces.map(f => f.name)])];
+  const faceBox = !changing && faceable.length && ps.length > 1 ? `<div class="facebox"><p>Remember the other person by face, so later videos with them do not ask:</p>
+    <datalist id="staffnames">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+    ${faceable.map(p => `<label class="check faceopt" data-fpid="${p.id}"><input type="checkbox" class="faceck" ${faceable.length === 1 && ps.length === 2 ? "checked" : ""}> ${esc(p.name)} as experimenter named <input type="text" class="facename" list="staffnames" placeholder="${names.length ? "pick a name or type one" : "e.g. Sam"}" value="${names.length === 1 ? esc(names[0]) : ""}" maxlength="40"></label>`).join("")}
     <p class="muted">Only the face description (a list of numbers) is kept, never the picture, and never for the person you crop.</p></div>` : "";
   const noNames = byLook.length && !named.length ? " This recording shows no name labels, so people were told apart by how their tile looks; some cards may be slide content rather than a person." : "";
   const body = ps.length ? `<p class="desc">${changing ? "Pick a different person for this video. This does not change who is remembered as an experimenter."
@@ -552,6 +558,7 @@ async function showReview(j) {
   const reviewSecs = reviews.reduce((a, r) => a + r.end - r.start, 0);
   $("#main").innerHTML = `${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
       <button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
+    ${d.notice_text ? `<p class="notice" role="status">${esc(d.notice_text)} If it is not, click Change person.</p>` : ""}
     <dl class="facts">
       <div><dt>Length</dt><dd>${fmt(total)}</dd></div>
       <div><dt>Child visible</dt><dd class="${sm.visible_pct < 99 ? "attn" : ""}">${sm.visible_pct}%</dd></div>
