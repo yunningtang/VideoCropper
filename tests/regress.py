@@ -1,0 +1,132 @@
+"""Regression set: known tile boxes and the child's / experimenter's tile at given times.
+
+    python tests/regress.py            # everything (analysis results are cached per code version)
+    python tests/regress.py detect     # only the single-frame tile finder
+    python tests/regress.py P124 P273  # only these videos
+
+Truth lives in tests/truth.json: for each video, [time, box] pairs for the child's tile
+and the experimenter's tile, checked by eye. Boxes count as found at IoU >= 0.8; the
+child's timeline is right at a moment when its box has IoU >= 0.6 with the truth.
+"""
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import av  # noqa: E402
+
+from zoomcrop import timeline  # noqa: E402
+from zoomcrop.detect import find_tiles, iou  # noqa: E402
+
+TRUTH = json.load(open(ROOT / "tests" / "truth.json"))
+CACHE = ROOT / "tests" / ".cache"
+
+
+def frame_at(container, t):
+    v = container.streams.video[0]
+    container.seek(int(max(0, t - 0.01) / v.time_base), stream=v)
+    for f in container.decode(v):
+        if f.time >= t:
+            return f
+
+
+def check_detect(videos):
+    tot = hit = 0
+    ms = []
+    for vid in videos:
+        truth = TRUTH["videos"][vid]
+        cases = {}
+        for role in ("child", "experimenter"):
+            for t, box in truth[role]:
+                cases.setdefault(t, []).append(box)
+        with av.open(str(ROOT / TRUTH["files"][vid])) as c:
+            for t, boxes in sorted(cases.items()):
+                gray = frame_at(c, t).to_ndarray(format="gray")
+                t0 = time.time()
+                tiles = find_tiles(gray)
+                ms.append((time.time() - t0) * 1000)
+                for b in boxes:
+                    best = max((iou(b, tl.box) for tl in tiles), default=0.0)
+                    tot += 1
+                    hit += best >= 0.8
+                    if best < 0.8:
+                        print(f"  MISS {vid} t={t} {b} best {best:.2f}")
+    print(f"detect: {hit}/{tot} boxes found, {sum(ms) / len(ms):.0f} ms/frame mean, {max(ms):.0f} max")
+    return hit, tot
+
+
+def code_hash():
+    h = hashlib.sha1()
+    for f in ("analyze.py", "detect.py"):
+        h.update((ROOT / "zoomcrop" / f).read_bytes())
+    return h.hexdigest()[:10]
+
+
+def analysis(vid):
+    from zoomcrop.analyze import Analyzer
+    CACHE.mkdir(exist_ok=True)
+    f = CACHE / f"{vid}_{code_hash()}.json"
+    if f.exists():
+        return json.load(open(f))
+    t0 = time.time()
+    res = Analyzer().run(ROOT / TRUTH["files"][vid])
+    res["took"] = round(time.time() - t0, 1)
+    json.dump(res, open(f, "w"))
+    return res
+
+
+def box_at(segs, t):
+    for s in segs:
+        if s["start"] <= t < s["end"]:
+            return s["box"]
+    return None
+
+
+def check_video(vid):
+    truth = TRUTH["videos"][vid]
+    res = analysis(vid)
+    people = res["participants"]
+    tl = {p["id"]: timeline.build(res, p["id"]) for p in people}
+
+    def hits(pid, role):
+        return sum(1 for t, b in truth[role] if (bx := box_at(tl[pid], t)) is not None and iou(bx, b) >= 0.6)
+
+    scored = sorted(((hits(p["id"], "child"), hits(p["id"], "experimenter"), p) for p in people),
+                    key=lambda x: (-x[0], x[1]))
+    n_child, n_exp = len(truth["child"]), len(truth["experimenter"])
+    child = scored[0] if scored else (0, 0, None)
+    exp = max(((hits(p["id"], "experimenter"), p) for p in people if p is not child[2]), key=lambda x: x[0], default=(0, None))
+    auto = timeline.pick_child(people, truth["experimenter_names"])
+    name = child[2]["name"] if child[2] else "-"
+    vis = timeline.summarize(tl[child[2]["id"]])["visible_pct"] if child[2] else 0
+    print(f"{vid}: {len(people)} people; child={name!r} right {child[0]}/{n_child} visible {vis}%, "
+          f"contaminated {child[1]}/{n_exp}; experimenter found {exp[0]}/{n_exp}"
+          f"{' as ' + repr(exp[1]['name']) if exp[1] else ''}; auto-pick {auto}; "
+          f"took {res.get('took', '?')}s, {res['stats']}")
+    if truth["child_name"] and child[2] and child[2]["name"] != truth["child_name"]:
+        print(f"  child should be named {truth['child_name']!r}")
+    for t, b in truth["child"]:
+        bx = box_at(tl[child[2]["id"]], t) if child[2] else None
+        if bx is None or iou(bx, b) < 0.6:
+            print(f"  child wrong at t={t}: truth {b}, got {bx}")
+    return child[0], n_child, child[1]
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    videos = [a for a in args if a in TRUTH["videos"]] or list(TRUTH["videos"])
+    if "detect" in args or not args or all(a in TRUTH["videos"] for a in args):
+        check_detect(videos)
+    if "detect" not in args:
+        tot = ok = bad = 0
+        for vid in videos:
+            if vid == "P246":
+                continue  # boxes only
+            h, n, c = check_video(vid)
+            ok += h
+            tot += n
+            bad += c
+        print(f"child timeline: {ok}/{tot} moments right, {bad} contaminated by the experimenter")

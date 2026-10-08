@@ -1,0 +1,16 @@
+# local environment and tooling
+.venv/
+.claude/
+__pycache__/
+*.pyc
+
+# working data: uploaded copies, analysis cache, previews, exports
+workspace/
+output/
+
+# regression scratch (truth.json and .baseline.txt are kept)
+tests/.cache/
+tests/.run*.txt
+
+# partial renders
+*.part.mp4

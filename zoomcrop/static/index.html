@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zoom Child Crop</title>
+<style>
+/* Semantic colour tokens. Text colours are checked for 4.5:1 on their backgrounds;
+   the *-fill colours are for shapes (timeline blocks, bars), which need 3:1. */
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --line: #d9dee6; --text: #1c2330; --muted: #566070;
+  --accent: #2a56c6; --on-accent: #ffffff; --accent-soft: #e6edfc;
+  --ok: #1f7a50; --warn: #8a5200; --bad: #b3261e; --manual: #5a3fc0;
+  --ok-soft: #e2f4ea; --warn-soft: #fdeccb; --bad-soft: #fde3e1;
+  --ok-fill: #3fae7c; --warn-fill: #e09a2b; --bad-fill: #d14b4b; --bad-fill2: #8f2a2a; --manual-fill: #7a5ad6;
+  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 16px rgba(20, 30, 50, .05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c; --panel: #1d2128; --line: #343b47; --text: #e6e9ee; --muted: #a3acba;
+    --accent: #8fb0ff; --on-accent: #0f1524; --accent-soft: #232c44;
+    --ok: #63d3a2; --warn: #f0b65a; --bad: #f58f8a; --manual: #b6a3f5;
+    --ok-soft: #173326; --warn-soft: #3a2c10; --bad-soft: #3d1c1b;
+    --ok-fill: #46b985; --warn-fill: #e3a341; --bad-fill: #ea6b6b; --bad-fill2: #7d2f2f; --manual-fill: #a48cf0;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  display: grid; grid-template-rows: auto 1fr; overflow: hidden;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.skip { position: absolute; left: 8px; top: -40px; background: var(--panel); padding: 6px 12px; border-radius: 6px; z-index: 10; }
+.skip:focus { top: 8px; }
+button, input, select, .btn { font: inherit; color: inherit; }
+button, .btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  min-height: 30px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: border-color .15s, background-color .15s;
+}
+button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+button:active:not(:disabled) { background: var(--accent-soft); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:active:not(:disabled) { filter: brightness(.92); background: var(--accent); }
+button.ghost { border-color: transparent; background: none; color: var(--muted); padding: 4px 8px; }
+button.ghost:hover:not(:disabled) { color: var(--text); background: var(--accent-soft); border-color: transparent; }
+button.ghost.danger:hover:not(:disabled) { color: var(--bad); background: var(--bad-soft); }
+button:disabled { opacity: .5; cursor: default; }
+button[aria-busy=true] { cursor: progress; }
+input[type=text], input[type=number], select {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 5px 9px; min-width: 0; min-height: 30px;
+}
+input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+header {
+  display: flex; align-items: center; gap: 10px; padding: 9px 18px; background: var(--panel);
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.spacer { flex: 1; }
+.layout { display: grid; grid-template-columns: minmax(250px, 330px) 1fr; min-height: 0; }
+/* the sidebar is set apart by its background alone: no rules or borders around the list */
+aside { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+main { overflow: auto; padding: 18px 22px 40px; min-width: 0; container-type: inline-size; }
+main:focus { outline: none; }
+@media (max-width: 720px) {
+  body { display: block; overflow: auto; }
+  .layout { display: block; }
+  aside { max-height: 48vh; }
+  main { overflow: visible; padding: 14px; }
+}
+
+.drop {
+  margin: 12px; border: 1.5px dashed var(--muted); border-radius: 12px; padding: 14px; text-align: center;
+  color: var(--muted); cursor: pointer; transition: border-color .15s, background-color .15s; font-size: 13px;
+}
+.drop strong { display: block; color: var(--text); font-size: 14.5px; margin-bottom: 2px; }
+.drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.pathrow { display: flex; gap: 6px; margin: 0 12px 10px; }
+.pathrow input { flex: 1; font-size: 13px; }
+.filters { display: flex; gap: 4px; padding: 6px 12px; flex-wrap: wrap; }
+.filters button { padding: 2px 9px; min-height: 26px; font-size: 12.5px; border-radius: 99px; }
+.filters button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.overall { padding: 0 14px 6px; color: var(--muted); font-size: 12.5px; min-height: 22px; }
+.jobs { overflow: auto; flex: 1; list-style: none; margin: 0; padding: 0 8px 8px; }
+.job {
+  display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px;
+  background: none; min-height: 0; margin-bottom: 2px;
+}
+.job:hover:not(:disabled) { background: var(--bg); border: 0; }
+.job[aria-current=true] { background: var(--accent-soft); }
+.job .row { display: flex; align-items: center; gap: 8px; }
+.job .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.job .meta { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; font-weight: 600; }
+.chip.run { color: var(--accent); background: var(--accent-soft); }
+.chip.done, .chip.wait { color: var(--muted); background: var(--bg); }
+.chip.rev { color: var(--ok); background: var(--ok-soft); }
+.chip.flag, .chip.ask { color: var(--warn); background: var(--warn-soft); }
+.chip.err { color: var(--bad); background: var(--bad-soft); }
+.bar { display: block; height: 4px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .5s linear; }
+.listnone { padding: 18px 8px; color: var(--muted); font-size: 13px; }
+
+.empty { max-width: 560px; margin: 8vh auto; color: var(--muted); }
+.empty h2 { color: var(--text); font-size: 20px; margin: 0 0 10px; text-wrap: balance; }
+.empty ol { padding-left: 20px; } .empty li { margin: 6px 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.titlebar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.titlebar h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.who { color: var(--muted); } .who b { color: var(--text); }
+.facts { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.facts div { display: flex; gap: 6px; align-items: baseline; }
+.facts dt { margin: 0; } .facts dd { margin: 0; color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.facts dd.attn { color: var(--warn); }
+
+.players { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.cols { display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; align-items: start; }
+.players > *, .cols > * { min-width: 0; }
+@container (max-width: 640px) { .players, .cols { grid-template-columns: 1fr; } }
+@container (max-width: 420px) {
+  .jump { grid-template-columns: 72px 1fr auto; }
+  .jump .why { grid-column: 1 / -1; white-space: normal; }
+  .timegrid { grid-template-columns: auto 1fr; } .timegrid output { display: none; }
+}
+figure { margin: 0; min-width: 0; }
+figcaption { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between; gap: 12px; }
+figcaption span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.stage video { display: block; width: 100%; height: 100%; }
+#box { position: absolute; border: 2px solid #ff3b4e; box-shadow: 0 0 0 1px rgba(255,255,255,.75); pointer-events: none; display: none; }
+#box.manual { border-color: #b6a3f5; border-style: dashed; }
+#drawlayer { position: absolute; inset: 0; display: none; cursor: crosshair; background: rgba(42, 86, 198, .1); touch-action: none; }
+#drawlayer.on { display: block; }
+#drawrect { position: absolute; border: 2px dashed #8fb0ff; background: rgba(143, 176, 255, .2); display: none; pointer-events: none; }
+.nochild { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #c3cad6; font-size: 13px; pointer-events: none; }
+
+.transport { display: flex; align-items: center; gap: 8px 10px; margin: 10px 0 8px; flex-wrap: wrap; }
+.transport .time { font-variant-numeric: tabular-nums; min-width: 124px; }
+.transport label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.keys { color: var(--muted); font-size: 12.5px; margin: 6px 0 14px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+kbd { font: inherit; font-size: 12px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel); }
+#play { min-width: 74px; }
+.timeline { position: relative; height: 34px; background: var(--line); border-radius: 6px; cursor: pointer; overflow: hidden; touch-action: none; }
+/* state is carried by shape as well as colour: normal is a low block, anything flagged is full height,
+   "no child" is hatched, manual has a bar on top */
+.seg { position: absolute; bottom: 0; min-width: 2px; height: 100%; }
+.seg.ok { height: 50%; background: var(--ok-fill); }
+.seg.warn { background: var(--warn-fill); }
+.seg.miss { background: repeating-linear-gradient(45deg, var(--bad-fill) 0 4px, var(--bad-fill2) 4px 8px); }
+.seg.manual { background: var(--manual-fill); border-top: 4px solid var(--text); }
+#head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); pointer-events: none; box-shadow: 0 0 0 1px var(--panel); }
+#range { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,.3); border-inline: 2px solid var(--accent); pointer-events: none; display: none; }
+.legend { display: flex; gap: 16px; color: var(--muted); font-size: 12.5px; margin: 6px 0 0; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 14px; height: 12px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; position: relative; background: var(--line); overflow: hidden; }
+.legend i b { position: absolute; left: 0; right: 0; bottom: 0; }
+
+.card h3 { margin: 0 0 2px; font-size: 14.5px; }
+.card .desc { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+.rows { max-height: 320px; overflow: auto; margin: 0 -6px; list-style: none; padding: 0; }
+.rows li { display: flex; align-items: center; gap: 4px; }
+.jump {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 72px 112px 46px 1fr; gap: 8px; align-items: center;
+  text-align: left; border: 0; background: none; padding: 5px 6px; font-variant-numeric: tabular-nums; justify-content: start;
+}
+.jump:hover:not(:disabled) { background: var(--bg); }
+.jump .chip { text-align: center; }
+.jump .why { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.none { color: var(--muted); padding: 12px 6px; }
+fieldset { border: 0; padding: 0; margin: 0 0 12px; min-width: 0; }
+legend { padding: 0; font-weight: 600; margin-bottom: 6px; }
+.timegrid { display: grid; grid-template-columns: auto minmax(70px, 1fr) auto auto; gap: 6px 8px; align-items: center; }
+.timegrid output { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12.5px; min-width: 52px; }
+.ferr { color: var(--bad); font-size: 13px; margin: 6px 0 0; min-height: 0; }
+.ferr:empty { display: none; }
+.mode { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+.boxrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 2px 0 6px 24px; }
+.boxrow input { width: 74px; } .boxrow .tip { color: var(--muted); font-size: 12.5px; }
+.ovs { list-style: none; margin: 10px 0 0; padding: 0; }
+.ovs li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); font-size: 13px; font-variant-numeric: tabular-nums; }
+.ovs .new { color: var(--warn); font-size: 12.5px; font-weight: 600; }
+.applyrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.applyrow span { color: var(--muted); font-size: 12.5px; }
+
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.person {
+  display: block; padding: 0; text-align: left; border: 2px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: var(--panel); min-height: 0; position: relative;
+}
+.person:hover:not(:disabled) { border-color: var(--accent); }
+.person img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; }
+.person .info { display: block; padding: 9px 12px 4px; }
+.person .info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.person .info span { color: var(--muted); font-size: 12.5px; }
+.person .pick { display: block; margin: 6px 12px 12px; padding: 5px 0; text-align: center; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.person.staff .pick { background: none; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+.person .tag { position: absolute; top: 8px; left: 8px; }
+.staffbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.staffbox p { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+.facebox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.facebox p { margin: 0 0 6px; font-size: 13px; }
+.facebox .faceopt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.facebox .facename { width: 12em; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; }
+.muted { color: var(--muted); font-size: 13px; }
+.stafflist { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.stafflist li { display: inline-flex; align-items: center; gap: 2px; background: var(--bg); border-radius: 99px; padding: 0 2px 0 10px; }
+.stafflist button { min-height: 24px; padding: 0 7px; border-radius: 99px; }
+.check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.bigbar { height: 8px; background: var(--line); border-radius: 5px; overflow: hidden; margin: 12px 0 8px; }
+.bigbar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .6s linear; }
+.steps { display: flex; gap: 18px; color: var(--muted); font-size: 13px; list-style: none; margin: 0; padding: 0; }
+.steps .on { color: var(--accent); font-weight: 600; } .steps .past { color: var(--ok); }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 18px 20px; width: min(520px, 92vw); }
+dialog::backdrop { background: rgba(10, 14, 22, .5); }
+dialog h2 { margin: 0 0 12px; font-size: 17px; } dialog label { display: block; margin: 12px 0 4px; font-weight: 600; }
+dialog .tip { color: var(--muted); font-size: 13px; margin: 3px 0 0; }
+dialog input[type=text], dialog select { width: 100%; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+dialog .mode { margin: 0; font-weight: 400; }
+dialog .mode span { color: var(--muted); }
+.dirrow { display: flex; gap: 6px; } .dirrow input { flex: 1; }
+#eDoneText { overflow-wrap: anywhere; margin: 0; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 80vw; z-index: 20; }
+#toast.on { opacity: .97; }
+.errtext { color: var(--bad); white-space: pre-wrap; overflow-wrap: anywhere; }
+code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<header>
+  <h1 class="sr">Zoom Child Crop</h1>
+  <span class="spacer"></span>
+  <button id="openSettings">Settings</button>
+  <button id="openExport" class="primary" title="Save finished results to a folder you choose">Export…</button>
+</header>
+<div class="layout">
+  <aside aria-label="Videos">
+    <div class="drop" id="drop" role="button" tabindex="0">
+      <strong>Drop videos or a folder here</strong>
+      or click to choose files (mp4, mov, mkv …)
+    </div>
+    <input type="file" id="pick" accept="video/*,.mkv,.avi,.wmv" multiple hidden>
+    <div class="pathrow">
+      <label class="sr" for="path">Folder or file path on this computer</label>
+      <input type="text" id="path" placeholder="or paste a local path, e.g. D:\Recordings" title="Processes the videos where they are, without copying them">
+      <button id="addPath">Add</button>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="Filter videos"></div>
+    <div class="overall" id="overall" role="status"></div>
+    <ul class="jobs" id="jobs"></ul>
+  </aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<dialog id="settings" aria-labelledby="sTitle">
+  <h2 id="sTitle">Settings</h2>
+  <label for="sExp">Experimenters (never cropped automatically)</label>
+  <input type="text" id="sExp" placeholder="e.g. Dolly, Research Assistant">
+  <p class="tip">Zoom display names, separated by commas. When a video has exactly one person who is not on this list, that person is cropped without asking. Otherwise you are asked to choose.</p>
+  <label for="sH">Output size</label>
+  <select id="sH">
+    <option value="360">640 × 360</option><option value="480">854 × 480</option>
+    <option value="540">960 × 540</option><option value="720">1280 × 720</option>
+  </select>
+  <p class="tip">Every segment is scaled to this size (16:9). A small Zoom tile is only about 340 pixels wide in the recording, so a larger size does not add detail.</p>
+  <div class="actions"><button id="sCancel">Cancel</button><button class="primary" id="sSave">Save</button></div>
+</dialog>
+<dialog id="export" aria-labelledby="eTitle">
+  <h2 id="eTitle">Export</h2>
+  <div id="eForm">
+    <fieldset><legend>Which videos</legend><div id="eScope"></div></fieldset>
+    <label for="eDir">Save to folder</label>
+    <div class="dirrow"><input type="text" id="eDir" placeholder="e.g. D:\Study\cropped" aria-describedby="eErr"><button id="eBrowse">Browse…</button></div>
+    <p class="ferr" id="eErr" role="alert"></p>
+    <fieldset style="margin-top:14px"><legend>Files to save</legend>
+      <label class="mode"><input type="checkbox" id="eVideo" checked> Cropped video <code>name_child.mp4</code></label>
+      <label class="mode"><input type="checkbox" id="eSeg" checked> Segment table <code>name_segments.csv</code> (times, crop boxes, flags)</label>
+      <label class="mode"><input type="checkbox" id="eRep"> Full report <code>name_report.json</code></label>
+      <label class="mode"><input type="checkbox" id="eSum" checked> Batch summary <code>crop_summary.csv</code> (one row per video)</label>
+    </fieldset>
+    <div class="actions"><button id="eCancel">Cancel</button><button class="primary" id="eGo">Export</button></div>
+  </div>
+  <div id="eDone" hidden>
+    <p id="eDoneText"></p>
+    <div class="actions"><button id="eOpen">Open folder</button><button class="primary" id="eClose">Done</button></div>
+  </div>
+</dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const fmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, "0")}`; };
+const dur = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`;
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+const api = async (url, opt = {}) => {
+  if (opt.json !== undefined) { opt.body = JSON.stringify(opt.json); opt.headers = {"Content-Type": "application/json"}; opt.method ??= "POST"; }
+  const r = await fetch(url, opt);
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch {} throw new Error(m); }
+  return r.json();
+};
+let toastTimer;
+function toast(msg, isError = false) {
+  const t = $("#toast"); t.setAttribute("role", isError ? "alert" : "status");
+  t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 4000);
+}
+// run an async action with the button disabled, so a double click cannot fire it twice
+async function busy(btn, fn) {
+  if (btn.disabled) return; btn.disabled = true; btn.setAttribute("aria-busy", "true");
+  try { await fn(); } catch (e) { toast(e.message, true); }
+  finally { if (btn.isConnected) { btn.disabled = false; btn.removeAttribute("aria-busy"); } }
+}
+
+const S = { jobs: [], settings: {}, sel: null, shown: "", uploads: [], picking: false, filter: "all", clock: 0 };
+const REVIEW = new Set(["filled", "look", "camera_off"]);
+const UNSAVED = "You have manual fixes that are not applied yet. They will be lost if you leave. Leave anyway?";
+const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "missing" ? "miss" : s.flags.some(f => REVIEW.has(f)) ? "warn" : "ok";
+const isBusy = j => j.status === "analyzing" || j.status === "rendering";
+const GROUPS = {
+  all: ["All", () => true],
+  todo: ["Needs action", j => j.status === "choose" || j.status === "error" || (j.status === "done" && (j.summary?.visible_pct ?? 100) < 50)],
+  review: ["To review", j => j.status === "done" && !j.reviewed],
+  ok: ["Reviewed", j => j.status === "done" && j.reviewed],
+  out: ["Exported", j => j.status === "done" && exportState(j) === "current"],
+};
+// exported and still current / exported but changed since / never exported
+const exportState = j => !j.exported ? "none" : j.exported.rev === j.rev ? "current" : "stale";
+const norm = s => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+const isStaffName = name => (S.settings.experimenters || []).some(e => norm(e) === norm(name));
+// an experimenter is known by name (the Zoom label) or by face (remembered on an earlier video)
+const isStaff = p => typeof p === "string" ? isStaffName(p) : !!p.experimenter || isStaffName(p.name);
+function chip(j) {
+  if (j.status === "done") {
+    // mostly empty result: the wrong person, or the tile could not be identified
+    if ((j.summary?.visible_pct ?? 100) < 50) return ["Mostly empty", "err"];
+    if (exportState(j) === "current") return ["Exported", "rev"];
+    if (exportState(j) === "stale") return ["Changed since export", "flag"];
+    return j.reviewed ? ["Reviewed", "rev"] : j.summary?.review_n ? [`${j.summary.review_n} to check`, "flag"] : ["Ready to review", "done"];
+  }
+  return {queued: ["Queued", "wait"], analyzing: ["Analyzing", "run"], rendering: ["Exporting", "run"], choose: ["Choose child", "ask"], error: ["Failed", "err"]}[j.status] || [j.status, "wait"];
+}
+function eta(j) {
+  if (!j.started || j.progress < 0.03) return "";
+  const left = (Date.now() / 1000 + S.clock - j.started) * (1 - j.progress) / j.progress;
+  return `about ${dur(left)} left`;
+}
+
+/* ---------- job list ---------- */
+function renderList() {
+  $("#filters").innerHTML = Object.entries(GROUPS).map(([k, [label, f]]) =>
+    `<button data-f="${k}" aria-pressed="${S.filter === k}">${label} ${S.jobs.filter(f).length}</button>`).join("");
+  const running = S.jobs.filter(isBusy).length, queued = S.jobs.filter(j => j.status === "queued").length + S.uploads.length;
+  const overall = running || queued ? `Processing ${running}${queued ? `, ${queued} queued` : ""}` : S.jobs.length ? plural(S.jobs.length, "video") : "";
+  if ($("#overall").textContent !== overall) $("#overall").textContent = overall;
+  const pending = S.jobs.filter(j => j.status === "done" && exportState(j) !== "current").length;
+  $("#openExport").textContent = pending ? `Export… (${pending})` : "Export…";
+  $("#openExport").disabled = !S.jobs.some(j => j.status === "done");
+
+  const ups = S.uploads.map(u => `<li><div class="job"><span class="row"><span class="name">${esc(u.name)}</span><span class="chip run">Uploading</span></span>
+    <span class="bar"><i style="width:${(u.p * 100).toFixed(0)}%"></i></span></div></li>`).join("");
+  const shown = S.jobs.filter(GROUPS[S.filter][1]);
+  const rows = shown.map(j => {
+    const [label, cls] = chip(j);
+    let meta = "";
+    if (j.status === "done" && j.summary) meta = `${j.child_name || "Manual area"} · visible ${j.summary.visible_pct}%${j.n_overrides ? ` · ${plural(j.n_overrides, "manual fix", "manual fixes")}` : ""}`;
+    else if (isBusy(j)) meta = `${(j.progress * 100).toFixed(0)}% · ${eta(j)}`;
+    else if (j.status === "choose") meta = "Waiting for you to pick the child";
+    else if (j.status === "error") meta = j.error;
+    return `<li><button class="job" data-id="${j.id}" ${j.id === S.sel ? `aria-current="true"` : ""}>
+      <span class="row"><span class="name" title="${esc(j.name)}">${esc(j.name)}</span><span class="chip ${cls}">${label}</span></span>
+      <span class="meta">${esc(meta)}</span>${isBusy(j) ? `<span class="bar"><i style="width:${(j.progress * 100).toFixed(1)}%"></i></span>` : ""}</button></li>`;
+  }).join("");
+  const html = ups + rows || `<li class="listnone">${S.jobs.length ? "No videos in this group." : "No videos yet. Drop a recording above to start."}</li>`;
+  const el = $("#jobs");
+  if (el.dataset.html === html) return;
+  const focused = document.activeElement?.closest?.(".job")?.dataset.id;  // keep keyboard focus across re-renders
+  el.dataset.html = html; el.innerHTML = html;
+  if (focused) $(`.job[data-id="${focused}"]`)?.focus();
+}
+$("#jobs").addEventListener("click", e => { const j = e.target.closest(".job[data-id]"); if (j) select(j.dataset.id); });
+$("#filters").addEventListener("click", e => { const b = e.target.closest("[data-f]"); if (b) { S.filter = b.dataset.f; renderList(); } });
+
+const unsaved = () => R && R.dirty;
+function select(id) {
+  if (id === S.sel) return;
+  if (unsaved() && !confirm(UNSAVED)) return;
+  S.sel = id; S.shown = ""; S.picking = false; renderList(); refreshMain();
+}
+window.addEventListener("beforeunload", e => { if (unsaved()) e.preventDefault(); });
+
+async function poll() {
+  try {
+    const st = await api("/api/state");
+    S.jobs = st.jobs; S.settings = st.settings; S.clock = st.now - Date.now() / 1000;
+    if (S.sel && !S.jobs.some(j => j.id === S.sel)) S.sel = null;
+    if (!S.sel && S.jobs.length) S.sel = (S.jobs.find(j => j.status === "choose") || S.jobs[S.jobs.length - 1]).id;
+    renderList(); refreshMain();
+  } catch (e) { /* server restarting */ }
+}
+
+/* ---------- main panel ---------- */
+function refreshMain() {
+  const j = S.jobs.find(j => j.id === S.sel);
+  if (!j) { if (S.shown !== "empty") { S.shown = "empty"; stopReview(); $("#main").innerHTML = emptyHtml(); } return; }
+  const key = `${j.id}|${j.status}|${j.rev}|${S.picking}`;
+  if (key === S.shown) { if (isBusy(j) || j.status === "queued") updateProgress(j); return; }
+  S.shown = key; stopReview();
+  if (S.picking || j.status === "choose") return showChoose(j);
+  if (j.status === "done") return showReview(j);
+  if (j.status === "error") return showError(j);
+  showProgress(j);
+}
+
+const emptyHtml = () => `<div class="empty"><h2>Crop the child's video out of Zoom screen recordings</h2>
+  <ol><li>Drop Zoom recordings on the left. You can drop many at once, or a whole folder.</li>
+  <li>The tool follows the video tile as it moves and resizes, and tells people apart by the name label in the tile's corner, or by face when the recording shows no labels.</li>
+  <li>The first time, it asks you which person is the child. Once it knows the experimenters' names, later videos run on their own.</li>
+  <li>When a video is done, play it back next to the original, check the spans marked on the timeline, then mark it as reviewed.</li>
+  <li>Nothing is saved outside this tool until you click Export and choose a folder.</li></ol></div>`;
+
+const head = (j, extra = "") => `<div class="titlebar"><h2>${esc(j.name)}</h2><span class="spacer"></span>${extra}
+  <button class="ghost" data-act="retry" title="Discard the current result and manual fixes and analyze from scratch">Re-analyze</button>
+  <button class="ghost danger" data-act="delete" title="Remove from this list. The original video and anything you exported are kept.">Remove</button></div>`;
+
+function showProgress(j) {
+  $("#main").innerHTML = `${head(j)}<div class="card">
+    <ol class="steps"><li id="st1">1. Analyze layout and names</li><li id="st2">2. Crop and export</li></ol>
+    <div class="bigbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="pwrap"><i id="pbar"></i></div>
+    <p id="ptext" class="desc"></p></div>`;
+  updateProgress(j);
+}
+function updateProgress(j) {
+  if (!$("#pbar")) return;
+  const rendering = j.status === "rendering", pct = (j.progress * 100).toFixed(0);
+  $("#st1").className = rendering ? "past" : j.status === "analyzing" ? "on" : "";
+  $("#st2").className = rendering ? "on" : "";
+  $("#pbar").style.width = (j.progress * 100).toFixed(1) + "%";
+  $("#pwrap").setAttribute("aria-valuenow", pct);
+  $("#pwrap").setAttribute("aria-label", rendering ? "Export progress" : "Analysis progress");
+  $("#ptext").textContent = j.status === "queued" ? "Queued behind other videos. You can look at other videos in the meantime; it will not slow this down."
+    : `${rendering ? "Step 2, exporting" : "Step 1, analyzing"}: ${pct}%. ${eta(j)}`;
+}
+function showError(j) {
+  $("#main").innerHTML = `${head(j)}<div class="card" role="alert"><h3>This video could not be processed</h3><p class="errtext">${esc(j.error)}</p>
+    <p class="desc">This is usually a damaged file or an unusual format. Try once more; if it fails again, the details are in <code>workspace/jobs/${j.id}/error.log</code>.</p>
+    <button class="primary" data-act="retry">Try again</button></div>`;
+}
+let choosing = { changing: false };
+function showChoose(j) {
+  const ps = j.participants || [];
+  // "changing" = this video already has a result and the user wants someone else
+  const changing = choosing.changing = S.picking && j.status !== "choose";
+  const waiting = S.jobs.filter(x => x.status === "choose").length;
+  // a name that also appears in other videos is probably staff; the one that does not is probably the child
+  const elsewhere = name => S.jobs.some(x => x.id !== j.id && (x.participants || []).some(p => norm(p.name) === norm(name)));
+  const named = ps.filter(p => !p.anon), byLook = ps.filter(p => p.anon);
+  const fresh = named.filter(p => !isStaff(p) && !elsewhere(p.name));
+  // a name seen only in this video is probably the child (people known only by look get no guess:
+  // the experimenter can easily be on screen longer than the child)
+  // people without a label: known only by face, so no guess from other videos unless a face matched
+  const anonOthers = byLook.filter(p => !isStaff(p));
+  const guess = !changing && fresh.length === 1 && named.some(p => !isStaff(p) && elsewhere(p.name)) ? fresh[0].id
+    : !changing && !named.length && anonOthers.length === 1 && byLook.some(p => p.experimenter) ? anonOthers[0].id : null;
+  const tag = p => changing && p.id === j.child_pid ? `<span class="chip rev tag">Current</span>`
+    : p.experimenter ? `<span class="chip wait tag">Experimenter (face recognised)</span>`
+    : isStaff(p) ? `<span class="chip wait tag">Experimenter</span>`
+    : p.id === guess ? `<span class="chip flag tag">Probably the child</span>` : "";
+  const staff = S.settings.experimenters || [], faces = S.settings.known_faces || [];
+  const staffBox = `<div class="staffbox"><p>${staff.length || faces.length ? "Remembered as experimenters (skipped without asking in later videos):" : "No one is remembered as an experimenter yet, so every video with more than one person will ask."}</p>
+    <ul class="stafflist">${staff.map(n => `<li>${esc(n)}<button class="ghost danger" data-unstaff="${esc(n)}" aria-label="Stop treating ${esc(n)} as an experimenter" title="Remove from the list">×</button></li>`).join("")}
+    ${faces.map(f => `<li>${esc(f.name)} <span class="muted">(by face)</span><button class="ghost danger" data-unface="${esc(f.name)}" aria-label="Forget ${esc(f.name)}'s face" title="Forget this face">×</button></li>`).join("")}</ul></div>`;
+  // people with no label but a visible face can be remembered by face; the name is for the list only
+  const faceBox = !changing && byLook.filter(p => p.face && !p.experimenter).length && ps.length > 1 ? `<div class="facebox"><p>Remember the other person by face, so later videos with them do not ask:</p>
+    ${byLook.filter(p => p.face && !p.experimenter).map(p => `<label class="check faceopt" data-fpid="${p.id}"><input type="checkbox" class="faceck"> ${esc(p.name)} as experimenter named <input type="text" class="facename" placeholder="e.g. Sam" maxlength="40"></label>`).join("")}
+    <p class="muted">Only the face description (a list of numbers) is kept, never the picture, and never for the person you crop.</p></div>` : "";
+  const noNames = byLook.length && !named.length ? " This recording shows no name labels, so people were told apart by how their tile looks; some cards may be slide content rather than a person." : "";
+  const body = ps.length ? `<p class="desc">${changing ? "Pick a different person for this video. This does not change who is remembered as an experimenter."
+      : `Click the picture of the person to crop.${noNames}${waiting > 1 ? ` ${waiting} videos are waiting for this choice; the next one opens right after.` : ""}`}</p>
+    <div class="people">${ps.map(p => `<button class="person ${isStaff(p) ? "staff" : ""}" data-pid="${p.id}">${tag(p)}
+      ${p.thumb ? `<img src="/api/jobs/${j.id}/thumb/${p.thumb}?r=${j.rev}" alt="">` : `<img alt="">`}
+      <span class="info"><b>${esc(p.name)}</b><span>${p.anon ? "No name label · " : ""}On screen ${(p.share * 100).toFixed(0)}% of the time</span></span>
+      <span class="pick">${isStaff(p) ? "Crop anyway (this video only)" : "Crop this person"}</span></button>`).join("")}</div>
+    ${!changing && ps.length > 1 && named.length > 1 && named.some(p => !isStaff(p)) ? `<label class="check"><input type="checkbox" id="remember" checked> Remember the other named people in this video as experimenters</label>` : ""}
+    ${faceBox}${staffBox}`
+    : `<p class="desc">No video tile could be told apart from the slides in this recording. You can continue with an empty result and then mark the crop area by hand in the review screen.</p>
+    <button class="primary" data-pid="-1">Continue and mark the area by hand</button>`;
+  $("#main").innerHTML = `${head(j, S.picking ? `<button data-act="cancelpick">Back</button>` : "")}<div class="card"><h3>Who should be cropped?</h3>${body}</div>`;
+}
+
+$("#main").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const j = S.jobs.find(j => j.id === S.sel); if (!j) return;
+  const act = b.dataset.act;
+  if (b.dataset.pid !== undefined) busy(b, async () => {
+    const pid = +b.dataset.pid, changing = choosing.changing;
+    // only the names shown to the user as "the other people" are remembered, and only when the box is ticked
+    const others = $("#remember")?.checked ? (j.participants || []).filter(p => p.id !== pid && !p.anon && !isStaff(p)).map(p => p.name) : [];
+    const faces = [...document.querySelectorAll(".faceopt")].filter(l => l.querySelector(".faceck").checked && +l.dataset.fpid !== pid)
+      .map(l => ({pid: +l.dataset.fpid, name: l.querySelector(".facename").value.trim() || "Experimenter"}));
+    await api(`/api/jobs/${j.id}/child`, {json: {pid, experimenters: others, remember_faces: faces}});
+    S.picking = false; if (R) R.dirty = false; await poll();
+    const kept = [...others, ...faces.map(f => `${f.name} (by face)`)];
+    if (kept.length) toast(`Remembered as experimenter: ${kept.join(", ")}. You can remove this on the choice screen or in Settings.`);
+    const next = S.jobs.find(x => x.status === "choose" && x.id !== j.id);
+    if (next && !changing) select(next.id);
+  });
+  else if (b.dataset.unface !== undefined) busy(b, async () => {
+    await api("/api/settings", {json: {forget_face: b.dataset.unface}});
+    await poll(); S.shown = ""; refreshMain();
+  });
+  else if (b.dataset.unstaff !== undefined) busy(b, async () => {
+    await api("/api/settings", {json: {experimenters: (S.settings.experimenters || []).filter(n => n !== b.dataset.unstaff)}});
+    await poll(); S.shown = ""; refreshMain();
+  });
+  else if (act === "retry") {
+    if (j.n_overrides && !confirm(`Re-analyzing discards the ${plural(j.n_overrides, "manual fix", "manual fixes")} on this video. Continue?`)) return;
+    busy(b, async () => { await api(`/api/jobs/${j.id}/retry`, {method: "POST"}); if (R) R.dirty = false; await poll(); });
+  } else if (act === "delete") {
+    const lose = j.status === "done" && exportState(j) !== "current" ? "\nIts cropped result has not been exported (or changed since) and will be discarded." : "";
+    if (!confirm(`Remove "${j.name}" from the list?${lose}\nThe original video and anything you already exported are kept.`)) return;
+    busy(b, async () => { await api(`/api/jobs/${j.id}`, {method: "DELETE"}); if (R) R.dirty = false; S.sel = null; await poll(); });
+  } else if (act === "pick") { if (unsaved() && !confirm(UNSAVED)) return; S.picking = true; refreshMain(); }
+  else if (act === "cancelpick") { S.picking = false; refreshMain(); }
+});
+
+/* ---------- review ---------- */
+let R = null;  // state of the open review view
+function stopReview() { if (R) { cancelAnimationFrame(R.raf); document.removeEventListener("keydown", R.onKey); R = null; } }
+
+async function showReview(j) {
+  let d;
+  try { d = await api(`/api/jobs/${j.id}`); } catch (e) { toast(e.message, true); return; }
+  if (S.sel !== j.id) return;
+  const V = d.video, total = V.duration, sm = d.summary;
+  const merged = [];  // adjacent segments of the same kind drawn as one block
+  for (const s of d.segments) {
+    const c = segClass(s), last = merged[merged.length - 1];
+    if (last && last.c === c && Math.abs(last.end - s.start) < 1e-3) last.end = s.end; else merged.push({c, start: s.start, end: s.end});
+  }
+  const reviews = [];  // flagged spans, joined when they touch
+  for (const s of d.segments) {
+    const c = segClass(s); if (c !== "warn" && c !== "miss") continue;
+    const why = s.flags.map(f => d.flag_text[f] || f);
+    const last = reviews[reviews.length - 1];
+    if (last && s.start - last.end < 0.3) { last.end = s.end; why.forEach(w => last.why.add(w)); if (c === "miss") last.c = "miss"; }
+    else reviews.push({start: s.start, end: s.end, c, why: new Set(why)});
+  }
+  const reviewSecs = reviews.reduce((a, r) => a + r.end - r.start, 0);
+  $("#main").innerHTML = `${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
+      <button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
+    <dl class="facts">
+      <div><dt>Length</dt><dd>${fmt(total)}</dd></div>
+      <div><dt>Child visible</dt><dd class="${sm.visible_pct < 99 ? "attn" : ""}">${sm.visible_pct}%</dd></div>
+      <div><dt>Window moves / resizes</dt><dd>${sm.layout_changes}</dd></div>
+      <div><dt>To check</dt><dd class="${reviews.length ? "attn" : ""}">${plural(reviews.length, "span")}, ${reviewSecs.toFixed(1)} s</dd></div>
+      <div><dt>Exported</dt><dd class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
+        exportState(d) === "none" ? "not yet" : exportState(d) === "stale" ? "yes, but changed since" : `to ${esc(d.exported.dir)}`}</dd></div>
+    </dl>
+    <div class="players">
+      <figure><figcaption><span>Original · the red box is the current crop</span></figcaption>
+        <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
+          <video id="vsrc" muted playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
+          <div id="box"></div><div id="drawrect"></div><div id="drawlayer"></div></div></figure>
+      <figure><figcaption><span>Cropped result (preview)</span></figcaption>
+        <div class="stage" style="aspect-ratio:16/9">
+          <video id="vout" playsinline preload="auto" aria-label="Cropped result" src="/api/jobs/${j.id}/output?rev=${d.rev}"></video>
+          <div class="nochild" id="nochild">The child is not on screen in this span</div></div></figure>
+    </div>
+    <div class="transport">
+      <button id="play" class="primary">Play</button>
+      <span class="time"><span id="cur">0:00.0</span> / ${fmt(total)}</span>
+      <label class="sr" for="rate">Playback speed</label>
+      <select id="rate"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      <button id="prevFlag" ${reviews.length ? "" : "disabled"}>Previous</button><button id="nextFlag" ${reviews.length ? "" : "disabled"}>Next</button>
+      <label><input type="checkbox" id="only" ${reviews.length ? "" : "disabled"}> Play only the spans to check</label>
+    </div>
+    <div class="timeline" id="tl" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
+      ${merged.map(m => `<div class="seg ${m.c}" style="left:${m.start / total * 100}%;width:${(m.end - m.start) / total * 100}%"></div>`).join("")}
+      <div id="range"></div><div id="head"></div></div>
+    <div class="legend" aria-hidden="true">
+      <span><i><b style="height:50%;background:var(--ok-fill)"></b></i>Normal (low block)</span>
+      <span><i><b style="height:100%;background:var(--warn-fill)"></b></i>Check this (tall block)</span>
+      <span><i><b style="height:100%;background:repeating-linear-gradient(45deg,var(--bad-fill) 0 3px,var(--bad-fill2) 3px 6px)"></b></i>Child not on screen (hatched)</span>
+      <span><i><b style="height:100%;background:var(--manual-fill);border-top:3px solid var(--text)"></b></i>Set by hand (top line)</span></div>
+    <p class="keys"><span><kbd>Space</kbd> play / pause</span><span><kbd>←</kbd> <kbd>→</kbd> 1 s (with <kbd>Shift</kbd> 5 s)</span>
+      <span><kbd>,</kbd> <kbd>.</kbd> one frame</span><span><kbd>P</kbd> <kbd>N</kbd> previous / next span to check</span></p>
+    <div class="cols">
+      <section class="card" aria-labelledby="hRev"><h3 id="hRev">Spans to check</h3>
+        <p class="desc">Click a time to jump there and look. If the crop is wrong, click Fix.</p>
+        ${reviews.length ? `<ul class="rows" id="reviews">${reviews.map((r, i) => `<li>
+          <button class="jump" data-i="${i}"><span class="chip ${r.c === "miss" ? "err" : "flag"}">${r.c === "miss" ? "No child" : "Check"}</span>
+            <span>${fmt(r.start)} – ${fmt(r.end)}</span><span>${(r.end - r.start).toFixed(1)}s</span>
+            <span class="why" title="${esc([...r.why].join("; "))}">${esc([...r.why].join("; "))}</span></button>
+          <button class="ghost" data-fix="${i}" aria-label="Fix the span from ${fmt(r.start)} to ${fmt(r.end)}">Fix</button></li>`).join("")}</ul>`
+          : `<p class="none">Nothing was flagged. It is still worth scrubbing through the timeline once before marking the video as reviewed.</p>`}</section>
+      <section class="card" aria-labelledby="hFix" id="fixcard"><h3 id="hFix">Manual fix</h3>
+        <p class="desc">Pick a time span and say how it should be cropped. Add as many as you need, then export once.</p>
+        <fieldset><legend>Time span (seconds)</legend>
+          <div class="timegrid">
+            <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="faOut"></output><button id="faNow">Use current time</button>
+            <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="fbOut"></output><button id="fbNow">Use current time</button>
+          </div><p class="ferr" id="fErr" role="alert"></p></fieldset>
+        <fieldset><legend>How to crop this span</legend>
+          <label class="mode"><input type="radio" name="fmode" value="box" checked> Use this box</label>
+          <div class="boxrow" id="boxrow">
+            <label for="bx">Left</label><input type="number" id="bx" step="2"><label for="by">Top</label><input type="number" id="by" step="2">
+            <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">pixels; height follows 16:9</span>
+            <button id="fDraw">Drag on the original</button><button id="fCur">Use current red box</button></div>
+          <label class="mode"><input type="radio" name="fmode" value="hold"> Keep the box from just before this span</label>
+          <label class="mode"><input type="radio" name="fmode" value="none"> No child (output black)</label>
+          <p class="ferr" id="bErr" role="alert"></p></fieldset>
+        <button id="fAdd">Add to fix list</button>
+        <ul class="ovs" id="ovs"></ul>
+        <div class="applyrow"><button class="primary" id="fApply" disabled>Apply and re-export</button><span id="applyNote"></span></div></section>
+    </div>`;
+
+  const vsrc = $("#vsrc"), vout = $("#vout"), box = $("#box"), tl = $("#tl");
+  R = { d, reviews, overrides: d.overrides.map(o => ({...o})), dirty: false, drawing: false, raf: 0, n: 0 };
+  const cur = () => vout.currentTime || 0;
+  const segAt = t => { const sg = d.segments; let lo = 0, hi = sg.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (sg[m].start <= t + 1e-4) lo = m; else hi = m - 1; } return sg[lo]; };
+  const seek = t => { t = Math.max(0, Math.min(total - 0.01, t)); vout.currentTime = t; vsrc.currentTime = t; };
+  const toggle = () => { if (vout.paused) { vout.play(); vsrc.play().catch(() => {}); } else { vout.pause(); vsrc.pause(); } };
+  vout.addEventListener("play", () => $("#play").textContent = "Pause");
+  vout.addEventListener("pause", () => { $("#play").textContent = "Play"; vsrc.pause(); vsrc.currentTime = vout.currentTime; });
+  vout.addEventListener("error", () => toast("The cropped result cannot be played in this browser.", true));
+  vsrc.addEventListener("error", () => toast("This browser cannot play the original's format, so the side-by-side view is unavailable. The cropped result is not affected.", true));
+  $("#play").onclick = toggle;
+  $("#rate").onchange = e => { vout.playbackRate = vsrc.playbackRate = +e.target.value; };
+
+  $("#exportOne").onclick = () => openExport(j.id);
+
+  // reviewed mark: tracks progress through a batch
+  const mark = $("#mark");
+  const drawMark = () => { mark.textContent = j.reviewed ? "Mark as not reviewed" : "Reviewed, next video"; mark.className = j.reviewed ? "" : "primary"; };
+  drawMark();
+  mark.onclick = () => busy(mark, async () => {
+    if (!j.reviewed && unsaved() && !confirm("You have manual fixes that are not applied yet. Mark as reviewed anyway?")) return;
+    const to = !j.reviewed;
+    await api(`/api/jobs/${j.id}/reviewed`, {json: {reviewed: to}}); j.reviewed = to; drawMark(); renderList();
+    if (!to) return;
+    const i = S.jobs.findIndex(x => x.id === j.id);
+    const next = [...S.jobs.slice(i + 1), ...S.jobs.slice(0, i)].find(x => x.status === "done" && !x.reviewed);
+    if (next) { R.dirty = false; select(next.id); $("#main").focus(); } else toast("Marked. Every finished video in this batch has been reviewed.");
+  });
+
+  function frame() {
+    const t = cur();
+    if (!vout.paused && !vsrc.seeking && Math.abs(vsrc.currentTime - t) > 0.15) vsrc.currentTime = t;
+    $("#cur").textContent = fmt(t);
+    $("#head").style.left = `calc(${t / total * 100}% - 1px)`;
+    if (R.n++ % 30 === 0) { tl.setAttribute("aria-valuenow", t.toFixed(1)); tl.setAttribute("aria-valuetext", fmt(t)); }
+    const s = segAt(t);
+    if (s && s.box) {
+      const [x0, y0, x1, y1] = s.box;
+      box.style.cssText = `display:block;left:${x0 / V.width * 100}%;top:${y0 / V.height * 100}%;width:${(x1 - x0) / V.width * 100}%;height:${(y1 - y0) / V.height * 100}%`;
+      box.className = s.flags.includes("manual") ? "manual" : "";
+    } else box.style.display = "none";
+    $("#nochild").style.display = s && !s.box ? "flex" : "none";
+    // "only flagged" playback: skip from the end of one flagged span to just before the next
+    if ($("#only").checked && !vout.paused && !vout.seeking && !reviews.some(r => t >= r.start - 1.2 && t <= r.end + 0.6)) {
+      const nx = reviews.find(r => r.start - 1 > t);
+      if (nx) seek(nx.start - 1); else { vout.pause(); toast("That was the last span to check."); }
+    }
+    R.raf = requestAnimationFrame(frame);
+  }
+  R.raf = requestAnimationFrame(frame);
+
+  // timeline scrubbing (arrow keys work too, see onKey)
+  const tlTime = e => { const r = tl.getBoundingClientRect(); return (e.clientX - r.left) / r.width * total; };
+  tl.addEventListener("pointerdown", e => { tl.setPointerCapture(e.pointerId); seek(tlTime(e)); });
+  tl.addEventListener("pointermove", e => { if (tl.hasPointerCapture(e.pointerId)) seek(tlTime(e)); });
+
+  // ----- manual fix form -----
+  const fa = $("#fa"), fb = $("#fb"), bx = $("#bx"), by = $("#by"), bw = $("#bw"), rect = $("#drawrect"), layer = $("#drawlayer");
+  const mode = () => $("input[name=fmode]:checked").value;
+  function showRange() {
+    const a = +fa.value, b = +fb.value, el = $("#range");
+    $("#faOut").textContent = fa.value === "" ? "" : fmt(a); $("#fbOut").textContent = fb.value === "" ? "" : fmt(b);
+    if (b > a) el.style.cssText = `display:block;left:${a / total * 100}%;width:${(b - a) / total * 100}%`; else el.style.display = "none";
+  }
+  function showBox() {  // preview of the typed / dragged box on the source video
+    const x = +bx.value, y = +by.value, w = +bw.value;
+    $("#boxrow").style.opacity = mode() === "box" ? 1 : .5;
+    if (mode() !== "box" || bw.value === "" || !(w > 0)) { rect.style.display = "none"; return; }
+    rect.style.cssText = `display:block;left:${x / V.width * 100}%;top:${y / V.height * 100}%;width:${w / V.width * 100}%;height:${w * 9 / 16 / V.height * 100}%`;
+  }
+  const setRange = (a, b) => { fa.value = a.toFixed(2); fb.value = b.toFixed(2); $("#fErr").textContent = ""; showRange(); };
+  fa.oninput = fb.oninput = showRange;
+  bx.oninput = by.oninput = bw.oninput = showBox;
+  document.querySelectorAll("input[name=fmode]").forEach(r => r.onchange = showBox);
+  $("#faNow").onclick = () => { fa.value = cur().toFixed(2); showRange(); };
+  $("#fbNow").onclick = () => { fb.value = cur().toFixed(2); showRange(); };
+  $("#fCur").onclick = () => {
+    const s = segAt(cur());
+    if (!s || !s.box) { $("#bErr").textContent = "There is no crop box at the current time. Move the playhead to a place where the red box is showing."; return; }
+    $("#bErr").textContent = ""; bx.value = s.box[0]; by.value = s.box[1]; bw.value = s.box[2] - s.box[0];
+    $("input[name=fmode][value=box]").checked = true; showBox();
+  };
+
+  if (reviews.length) $("#reviews").addEventListener("click", e => {
+    const fix = e.target.closest("[data-fix]"), go = e.target.closest(".jump");
+    if (go) seek(Math.max(0, reviews[+go.dataset.i].start - 0.5));
+    if (fix) { const r = reviews[+fix.dataset.fix]; seek(r.start); setRange(r.start, r.end); $("#fixcard").scrollIntoView({block: "nearest"}); fa.focus(); }
+  });
+  const jump = dir => { const t = cur(); const r = dir > 0 ? reviews.find(r => r.start > t + 0.3) : [...reviews].reverse().find(r => r.start < t - 0.8); if (r) seek(r.start); };
+  $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
+
+  const ovText = o => o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]}` : "no child";
+  function drawOvs() {
+    $("#ovs").innerHTML = R.overrides.map((o, i) => `<li><span>${fmt(o.start)} – ${fmt(o.end)}</span><span>${ovText(o)}</span>
+      ${o.fresh ? `<span class="new">not applied</span>` : ""}<span class="spacer"></span>
+      <button class="ghost danger" data-rm="${i}" aria-label="Delete the fix from ${fmt(o.start)} to ${fmt(o.end)}">Delete</button></li>`).join("");
+    $("#fApply").disabled = !R.dirty;
+    $("#applyNote").textContent = R.dirty ? "There are changes that are not applied. Re-exporting takes about half a minute to a minute." : "";
+  }
+  $("#ovs").addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if (b) { R.overrides.splice(+b.dataset.rm, 1); R.dirty = true; drawOvs(); } });
+  $("#fAdd").onclick = () => {
+    const a = +fa.value, b = +fb.value;
+    if (fa.value === "" || fb.value === "" || !(b > a)) { $("#fErr").textContent = "Enter a start and an end time, with the end after the start. You can click Use current time, or click Fix in the list on the left."; fa.focus(); return; }
+    $("#fErr").textContent = "";
+    const o = {start: a, end: Math.min(b, total), fresh: true};
+    if (mode() === "hold") o.mode = "hold";
+    else if (mode() === "none") o.box = null;
+    else {
+      const x = Math.round(+bx.value), y = Math.round(+by.value), w = Math.round(+bw.value);
+      if (bw.value === "" || !(w >= 60)) { $("#bErr").textContent = "No box yet. Drag one on the original, or click Use current red box and adjust the numbers (width at least 60)."; bw.focus(); return; }
+      o.box = [x, y, x + w, y + Math.round(w * 9 / 16)];
+    }
+    $("#bErr").textContent = "";
+    R.overrides.push(o); R.dirty = true; drawOvs(); toast("Added to the list. Click Apply and re-export when you are done.");
+  };
+  $("#fApply").onclick = () => busy($("#fApply"), async () => {
+    await api(`/api/jobs/${j.id}/overrides`, {json: {overrides: R.overrides.map(({fresh, ...o}) => o)}});
+    R.dirty = false; toast("Submitted. Re-exporting now."); await poll();
+  });
+  drawOvs(); showBox();
+
+  // drag a 16:9 box on the source video (the number fields above are the non-drag way to do the same)
+  const setDraw = on => { R.drawing = on; layer.classList.toggle("on", on); $("#fDraw").textContent = on ? "Cancel (Esc)" : "Drag on the original"; };
+  $("#fDraw").onclick = () => {
+    if (R.drawing) return setDraw(false);
+    vout.pause(); $("input[name=fmode][value=box]").checked = true; setDraw(true);
+    toast("Press and drag on the original video to outline the child's tile. The shape stays 16:9.");
+  };
+  let start = null;
+  const local = e => { const r = layer.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top, r.width]; };
+  const shape = e => { const [x, y] = local(e); const w = Math.abs(x - start[0]), h = w * 9 / 16;
+    return [x < start[0] ? start[0] - w : start[0], y < start[1] ? start[1] - h : start[1], w]; };
+  const fill = e => { const [x, y, w] = shape(e), k = V.width / local(e)[2]; bx.value = Math.round(x * k); by.value = Math.round(y * k); bw.value = Math.round(w * k); showBox(); };
+  layer.addEventListener("pointerdown", e => { layer.setPointerCapture(e.pointerId); start = local(e); });
+  layer.addEventListener("pointermove", e => { if (start) fill(e); });
+  layer.addEventListener("pointerup", e => { if (!start) return; fill(e); start = null; setDraw(false); $("#bErr").textContent = ""; bw.focus(); });
+
+  R.onKey = e => {
+    if ($("#settings").open || $("#export").open) return;
+    if (e.key === "Escape" && R.drawing) { start = null; setDraw(false); return; }
+    const tag = e.target.tagName;
+    if (/INPUT|SELECT|TEXTAREA/.test(tag) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const step = 1 / (V.fps || 25), k = e.key.toLowerCase();
+    if (e.code === "Space") { if (tag === "BUTTON" || tag === "A") return; e.preventDefault(); toggle(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); seek(cur() - (e.shiftKey ? 5 : 1)); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); seek(cur() + (e.shiftKey ? 5 : 1)); }
+    else if (e.key === ",") { vout.pause(); seek(cur() - step); }
+    else if (e.key === ".") { vout.pause(); seek(cur() + step); }
+    else if (k === "n") jump(1);
+    else if (k === "p") jump(-1);
+  };
+  document.addEventListener("keydown", R.onKey);
+}
+
+/* ---------- adding videos ---------- */
+const VIDEO = /\.(mp4|mov|m4v|mkv|avi|webm|wmv)$/i;
+let uploading = false;
+async function pump() {
+  if (uploading) return; uploading = true;
+  while (S.uploads.length) {
+    const u = S.uploads[0];
+    try {
+      await new Promise((ok, fail) => {
+        const x = new XMLHttpRequest();
+        x.open("PUT", `/api/upload?name=${encodeURIComponent(u.name)}`);
+        x.upload.onprogress = e => { u.p = e.loaded / e.total; renderList(); };
+        x.onload = () => x.status < 300 ? ok() : fail(new Error(JSON.parse(x.responseText || "{}").detail || x.statusText));
+        x.onerror = () => fail(new Error("upload failed"));
+        x.send(u.file);
+      });
+    } catch (e) { toast(`${u.name}: ${e.message}`, true); }
+    S.uploads.shift(); await poll();
+  }
+  uploading = false;
+}
+function addFiles(files) {
+  const all = [...files], vids = all.filter(f => VIDEO.test(f.name));
+  if (!vids.length) return toast("No video files found. Supported: mp4, mov, m4v, mkv, avi, webm, wmv.", true);
+  vids.forEach(f => S.uploads.push({name: f.name, file: f, p: 0}));
+  toast(`Added ${plural(vids.length, "video")}${all.length > vids.length ? `, skipped ${plural(all.length - vids.length, "other file")}` : ""}.`);
+  S.filter = "all"; renderList(); pump();
+}
+async function walk(entry, out) {
+  if (entry.isFile) out.push(await new Promise((ok, no) => entry.file(ok, no)));
+  else if (entry.isDirectory) {
+    const rd = entry.createReader();
+    for (;;) { const batch = await new Promise((ok, no) => rd.readEntries(ok, no)); if (!batch.length) break; for (const e of batch) await walk(e, out); }
+  }
+}
+const drop = $("#drop");
+drop.onclick = () => $("#pick").click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#pick").click(); } };
+$("#pick").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === "drop" || !e.relatedTarget) drop.classList.remove("over"); }));
+document.addEventListener("drop", async e => {
+  const entries = [...(e.dataTransfer.items || [])].map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return addFiles(e.dataTransfer.files);
+  const out = []; for (const en of entries) await walk(en, out); addFiles(out);
+});
+$("#addPath").onclick = () => busy($("#addPath"), async () => {
+  const p = $("#path").value.trim(); if (!p) { $("#path").focus(); return; }
+  const r = await api("/api/add_path", {json: {path: p}});
+  toast(`Added ${plural(r.added.length, "video")}${r.skipped ? `, ${r.skipped} already in the list` : ""}.`); $("#path").value = ""; S.filter = "all"; await poll();
+});
+$("#path").addEventListener("keydown", e => { if (e.key === "Enter") $("#addPath").click(); });
+
+/* ---------- settings ---------- */
+$("#openSettings").onclick = () => {
+  $("#sExp").value = (S.settings.experimenters || []).join(", ");
+  $("#sH").value = String(S.settings.out_height || 360);
+  $("#settings").showModal();
+};
+$("#sCancel").onclick = () => $("#settings").close();
+$("#sSave").onclick = () => busy($("#sSave"), async () => {
+  await api("/api/settings", {json: {experimenters: $("#sExp").value.split(/[,\uFF0C]/), out_height: +$("#sH").value}});
+  $("#settings").close(); toast("Saved. The output size applies to videos processed from now on."); await poll(); S.shown = ""; refreshMain();
+});
+
+/* ---------- export ---------- */
+let exportIds = () => [];
+function openExport(currentId) {
+  const done = S.jobs.filter(j => j.status === "done");
+  const cur = done.find(j => j.id === currentId);
+  const groups = [
+    cur && ["one", `This video: ${cur.name}`, [cur]],
+    ["new", "Reviewed videos not exported yet", done.filter(j => j.reviewed && exportState(j) !== "current")],
+    ["all", "All finished videos", done],
+  ].filter(Boolean);
+  const pre = cur ? "one" : groups.find(g => g[0] === "new")[2].length ? "new" : "all";
+  $("#eScope").innerHTML = groups.map(([k, label, list]) => `<label class="mode"><input type="radio" name="escope" value="${k}"
+    ${k === pre ? "checked" : ""} ${list.length ? "" : "disabled"}> ${esc(label)}${k === "one" ? "" : ` <span>(${list.length})</span>`}</label>`).join("");
+  exportIds = () => groups.find(g => g[0] === $("input[name=escope]:checked")?.value)?.[2].map(j => j.id) || [];
+  if (!$("#eDir").value) $("#eDir").value = S.settings.export_dir || "";
+  $("#eErr").textContent = ""; $("#eForm").hidden = false; $("#eDone").hidden = true;
+  $("#export").showModal();
+}
+$("#openExport").onclick = () => openExport(null);
+$("#eCancel").onclick = $("#eClose").onclick = () => $("#export").close();
+$("#eBrowse").onclick = () => busy($("#eBrowse"), async () => {
+  const r = await api("/api/pick_folder", {json: {start: $("#eDir").value}});
+  if (r.path) { $("#eDir").value = r.path; $("#eErr").textContent = ""; }
+});
+$("#eGo").onclick = () => busy($("#eGo"), async () => {
+  const err = m => { $("#eErr").textContent = m; };
+  const ids = exportIds();
+  if (!ids.length) return err("There is nothing to export in that group yet.");
+  if (!$("#eDir").value.trim()) { $("#eDir").focus(); return err("Choose where to save: click Browse, or type a folder path."); }
+  const req = {ids, dest: $("#eDir").value, include: {video: $("#eVideo").checked, segments: $("#eSeg").checked, report: $("#eRep").checked, summary: $("#eSum").checked}};
+  try {
+    let r = await api("/api/export", {json: req});
+    if (r.conflicts) {
+      const more = r.n_conflicts > r.conflicts.length ? `\n\u2026 and ${r.n_conflicts - r.conflicts.length} more` : "";
+      if (!confirm(`${plural(r.n_conflicts, "file")} with the same name already exist in that folder:\n\n${r.conflicts.join("\n")}${more}\n\nReplace them?`)) return;
+      r = await api("/api/export", {json: {...req, overwrite: true}});
+    }
+    $("#eDoneText").textContent = `Saved ${plural(r.videos, "video")} (${plural(r.files, "file")}) to ${r.dir}`;
+    $("#eOpen").onclick = () => busy($("#eOpen"), () => api("/api/open_folder", {json: {path: r.dir}}));
+    $("#eForm").hidden = true; $("#eDone").hidden = false; $("#eClose").focus();
+    await poll(); S.shown = unsaved() ? S.shown : ""; refreshMain();
+  } catch (e) { err(e.message); }
+});
+
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>

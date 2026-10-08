@@ -1,0 +1,26 @@
+  MISS P124 t=290 [1584, 0, 1920, 189] best 0.59
+  MISS P124 t=360 [1584, 0, 1920, 189] best 0.51
+  MISS P273 t=30 [1198, 232, 1435, 367] best 0.59
+  MISS P259 t=9 [996, 5, 1226, 137] best 0.77
+detect: 99/103 boxes found, 158 ms/frame mean, 752 max
+P124: 2 people; child='Person B' right 13/18, contaminated 0/17; experimenter found 15/17 as 'Person A'; auto-pick None; took 262.9s, {'ocr_calls': 1126, 'full_detections': 1185, 'samples': 1305}
+  child wrong at t=200: truth [1584, 188, 1918, 376], got None
+  child wrong at t=305: truth [1584, 188, 1918, 376], got None
+  child wrong at t=307.9: truth [1584, 188, 1918, 376], got None
+  child wrong at t=310: truth [1584, 188, 1918, 376], got None
+  child wrong at t=360: truth [1584, 188, 1918, 376], got None
+P273: 2 people; child='Person A' right 10/15, contaminated 0/15; experimenter found 7/15 as 'Person B'; auto-pick None; took 251.2s, {'ocr_calls': 780, 'full_detections': 795, 'samples': 823}
+  child wrong at t=30: truth [1198, 232, 1435, 367], got [1134, 233, 1372, 367]
+  child wrong at t=39: truth [1198, 232, 1432, 367], got None
+  child wrong at t=103: truth [1192, 673, 1432, 808], got None
+  child wrong at t=170.5: truth [1198, 673, 1440, 808], got None
+  child wrong at t=178: truth [1198, 673, 1440, 808], got None
+P259: 1 people; child='Person A' right 10/15, contaminated 4/6; experimenter found 0/6; auto-pick 5; took 225.5s, {'ocr_calls': 2002, 'full_detections': 1212, 'samples': 1617}
+  child wrong at t=5: truth [996, 5, 1226, 137], got [740, 4, 980, 139]
+  child wrong at t=9: truth [996, 5, 1226, 137], got [740, 4, 980, 139]
+  child wrong at t=22.5: truth [998, 5, 1226, 137], got [740, 4, 980, 139]
+  child wrong at t=100: truth [690, 5, 924, 137], got [438, 7, 666, 135]
+  child wrong at t=141.5: truth [394, 305, 1026, 665], got None
+P224: 4 people; child='Adele' right 12/13, contaminated 0/4; experimenter found 4/4 as 'Dolly'; auto-pick 0; took 156.5s, {'ocr_calls': 1595, 'full_detections': 1116, 'samples': 1797}
+  child wrong at t=263.5: truth [909, 200, 1869, 740], got None
+child timeline: 45/61 moments right, 4 contaminated by the experimenter

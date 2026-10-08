@@ -1,0 +1,600 @@
+"""Local web app: drop videos in, watch progress, review and correct the crops.
+
+Everything runs on this machine; the server only listens on 127.0.0.1.
+"""
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+import json
+import os
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import traceback
+import uuid
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
+
+import numpy as np
+
+from . import timeline
+from .analyze import FACE_MIN_VOTES, FACE_SAME, Analyzer, Cancelled, FaceReader, LabelReader, names_match
+from .render import render
+
+ROOT = Path(__file__).resolve().parent.parent
+WORK = ROOT / "workspace"
+UPLOADS = WORK / "uploads"
+JOBDIR = WORK / "jobs"
+SETTINGS_FILE = WORK / "settings.json"
+STATIC = Path(__file__).resolve().parent / "static"
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".wmv"}
+N_WORKERS = 2
+
+# known_faces: experimenters remembered by face, [{"name", "model", "vectors": [[...], ...]}].
+# Only face descriptions of people the user marked as experimenters are ever stored.
+DEFAULT_SETTINGS = {"experimenters": [], "known_faces": [], "out_height": 360, "export_dir": ""}
+FACES_PER_PERSON = 24
+
+# Runs in its own process: Tk wants a main thread, and a crash there must not take the server down.
+FOLDER_DIALOG = """
+import sys, tkinter
+from tkinter import filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+root.update()
+path = filedialog.askdirectory(parent=root, initialdir=sys.argv[1] or None,
+                               title="Choose where to save the exported files", mustexist=False)
+sys.stdout.buffer.write(path.encode("utf-8"))
+"""
+
+app = FastAPI(title="Zoom child crop")
+lock = threading.RLock()
+jobs: dict[str, dict] = {}
+cancels: dict[str, threading.Event] = {}
+tasks: queue.Queue = queue.Queue()
+settings: dict = dict(DEFAULT_SETTINGS)
+# face descriptions of the people in each analysed video, by participant id; kept in memory
+# only, so nothing about a child is written anywhere
+job_faces: dict[str, dict[int, list]] = {}
+
+
+# -- persistence -----------------------------------------------------------
+def load_state():
+    for d in (UPLOADS, JOBDIR):
+        d.mkdir(parents=True, exist_ok=True)
+    if SETTINGS_FILE.exists():
+        try:
+            settings.update(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+    # earlier versions wrote results straight into a fixed folder; offer it as the first export location
+    settings.setdefault("known_faces", [])
+    old = settings.pop("output_dir", None)
+    if old and not settings.get("export_dir"):
+        settings["export_dir"] = old
+    for f in sorted(JOBDIR.glob("*/job.json")):
+        try:
+            job = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        jobs[job["id"]] = job
+        cancels[job["id"]] = threading.Event()
+        # resume whatever was interrupted by the last shutdown
+        if job["status"] in ("queued", "analyzing"):
+            enqueue(job, "analyze")
+        elif job["status"] == "rendering":
+            enqueue(job, "render")
+
+
+def save_job(job: dict):
+    d = JOBDIR / job["id"]
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "job.json.tmp"
+    tmp.write_text(json.dumps(job, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, d / "job.json")
+
+
+def public_settings() -> dict:
+    """Settings as the page sees them: the face descriptions stay on the server."""
+    out = dict(settings)
+    out["known_faces"] = [{"name": e["name"], "n": len(e.get("vectors", []))} for e in settings["known_faces"]]
+    return out
+
+
+def save_settings():
+    WORK.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def read_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# -- jobs ------------------------------------------------------------------
+def new_job(src: Path, origin: str) -> dict:
+    job = {
+        "id": uuid.uuid4().hex[:10], "name": src.name if origin == "path" else src.name.split("_", 1)[1],
+        "src": str(src), "origin": origin, "status": "queued", "progress": 0.0, "error": "",
+        "created": time.time(), "child_pid": None, "child_name": "", "participants": [],
+        "video": None, "summary": None, "output": "", "overrides": [], "rev": 0, "took": {},
+        "reviewed": False, "started": None, "exported": None, "render": None,
+    }
+    with lock:
+        jobs[job["id"]] = job
+        cancels[job["id"]] = threading.Event()
+        save_job(job)
+    enqueue(job, "analyze")
+    return job
+
+
+def enqueue(job: dict, task: str):
+    job["status"] = "queued"
+    job["progress"] = 0.0
+    job["next"] = task
+    tasks.put((job["id"], task))
+
+
+def set_status(job: dict, status: str, **extra):
+    with lock:
+        job["status"] = status
+        job.update(extra)
+        save_job(job)
+
+
+def resolve_child(job: dict) -> int | None:
+    return timeline.pick_child(job["participants"], settings["experimenters"])
+
+
+def _cos(a, b) -> float:
+    a, b = np.asarray(a, np.float32).ravel(), np.asarray(b, np.float32).ravel()
+    d = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(a @ b / d) if d > 1e-6 else 0.0
+
+
+def apply_known_faces(job: dict) -> bool:
+    """Mark participants whose face matches a remembered experimenter. Used when the
+    list of remembered faces changes after a video was analysed."""
+    vectors = job_faces.get(job["id"]) or {}
+    changed = False
+    for p in job["participants"]:
+        if p.get("experimenter") or not p.get("anon") or p["id"] not in vectors:
+            continue
+        votes: dict[str, int] = {}
+        for v in vectors[p["id"]]:
+            best = max(((max(_cos(v, k) for k in e["vectors"]), e["name"]) for e in settings["known_faces"]
+                        if e.get("model") == FaceReader.MODEL and e.get("vectors")), default=(0.0, ""))
+            if best[0] >= FACE_SAME:
+                votes[best[1]] = votes.get(best[1], 0) + 1
+        if votes:
+            name, n = max(votes.items(), key=lambda kv: kv[1])
+            if n >= FACE_MIN_VOTES:
+                p["experimenter"], p["name"], changed = True, name, True
+    return changed
+
+
+def remember_face(name: str, vectors: list):
+    """Add face descriptions to a remembered experimenter (or create one)."""
+    name = name.strip()
+    if not name or not vectors:
+        return
+    entry = next((e for e in settings["known_faces"] if names_match(e["name"], name) and e.get("model") == FaceReader.MODEL), None)
+    if entry is None:
+        entry = {"name": name, "model": FaceReader.MODEL, "vectors": []}
+        settings["known_faces"].append(entry)
+    entry["vectors"] = (entry["vectors"] + [[round(float(x), 5) for x in v] for v in vectors])[-FACES_PER_PERSON:]
+
+
+def worker():
+    reader = None
+    while True:
+        jid, task = tasks.get()
+        job = jobs.get(jid)
+        cancel = cancels.get(jid)
+        if job is None or cancel is None or cancel.is_set():
+            continue
+        jdir = JOBDIR / jid
+
+        def progress(p, job=job):
+            job["progress"] = round(float(p), 4)
+
+        try:
+            if task == "analyze":
+                if reader is None:
+                    reader = LabelReader()
+                set_status(job, "analyzing", progress=0.0, error="", started=time.time())
+                t0 = time.time()
+                an = Analyzer(reader, known_faces=settings.get("known_faces"))
+                res = an.run(job["src"], thumb_dir=jdir, progress=progress, cancel=cancel.is_set)
+                job_faces[jid] = an.face_vectors
+                (jdir / "analysis.json").write_text(json.dumps(res), encoding="utf-8")
+                job["took"]["analyze"] = round(time.time() - t0, 1)
+                job["participants"] = res["participants"]
+                job["video"] = res["video"]
+                pid = resolve_child(job)
+                if pid is None:
+                    set_status(job, "choose", progress=1.0)
+                    continue
+                job["child_pid"] = pid
+                task = "render"
+            if task == "render":
+                analysis = read_json(jdir / "analysis.json")
+                pid = job["child_pid"]
+                job["child_name"] = next((p["name"] for p in job["participants"] if p["id"] == pid), "")
+                segs = timeline.build(analysis, pid, job["overrides"])
+                set_status(job, "rendering", progress=0.0, error="", started=time.time())
+                t0 = time.time()
+                # The result stays in the workspace for review; nothing is written
+                # anywhere else until the user exports it.
+                out = jdir / "child.mp4"
+                info = render(job["src"], out, segs, out_h=int(settings["out_height"]),
+                              progress=progress, cancel=cancel.is_set)
+                job["took"]["render"] = round(time.time() - t0, 1)
+                (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
+                set_status(job, "done", progress=1.0, summary=timeline.summarize(segs), output=str(out),
+                           render=info, rev=job["rev"] + 1, reviewed=False)
+        except Cancelled:
+            pass
+        except Exception as e:  # keep the worker alive; show the failure on the job
+            (jdir / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
+            set_status(job, "error", error=f"{type(e).__name__}: {e}")
+
+
+def public(job: dict) -> dict:
+    keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
+            "participants", "video", "summary", "rev", "took", "created", "src",
+            "reviewed", "started", "exported")
+    out = {k: job.get(k) for k in keys}
+    out["n_overrides"] = len(job.get("overrides") or [])
+    return out
+
+
+def get_job(jid: str) -> dict:
+    job = jobs.get(jid)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return job
+
+
+# -- routes ----------------------------------------------------------------
+@app.on_event("startup")
+def startup():
+    load_state()
+    for _ in range(N_WORKERS):
+        threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/state")
+def state():
+    with lock:
+        return {"jobs": [public(j) for j in sorted(jobs.values(), key=lambda j: j["created"])],
+                "settings": public_settings(), "now": time.time()}
+
+
+@app.put("/api/upload")
+async def upload(request: Request, name: str):
+    safe = Path(name).name
+    if Path(safe).suffix.lower() not in VIDEO_EXT:
+        raise HTTPException(400, f"Unsupported file type: {safe}")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    dst = UPLOADS / f"{uuid.uuid4().hex[:6]}_{safe}"
+    with open(dst, "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+    return public(new_job(dst, "upload"))
+
+
+@app.post("/api/add_path")
+async def add_path(request: Request):
+    body = await request.json()
+    p = Path(str(body.get("path", "")).strip().strip('"'))
+    if not p.exists():
+        raise HTTPException(400, f"Path does not exist: {p}")
+    files = [p] if p.is_file() else sorted(f for f in p.iterdir() if f.is_file())
+    files = [f for f in files if f.suffix.lower() in VIDEO_EXT and not f.stem.endswith("_child")]
+    if not files:
+        raise HTTPException(400, "No video files found at that path")
+    known = {j["src"] for j in jobs.values()}
+    added = [public(new_job(f, "path")) for f in files if str(f) not in known]
+    return {"added": added, "skipped": len(files) - len(added)}
+
+
+@app.get("/api/jobs/{jid}")
+def job_detail(jid: str):
+    job = get_job(jid)
+    out = public(job)
+    seg_file = JOBDIR / jid / "segments.json"
+    out["segments"] = read_json(seg_file) if seg_file.exists() else []
+    out["overrides"] = job["overrides"]
+    out["flag_text"] = timeline.FLAG_TEXT
+    return out
+
+
+@app.post("/api/jobs/{jid}/child")
+async def choose_child(jid: str, request: Request):
+    job = get_job(jid)
+    body = await request.json()
+    pid = int(body["pid"])
+    if pid != -1 and not any(p["id"] == pid for p in job["participants"]):
+        raise HTTPException(400, "unknown participant")
+    if not (JOBDIR / jid / "analysis.json").exists():
+        raise HTTPException(409, "analysis not finished")
+    with lock:
+        job["child_pid"] = pid
+        # Only names the page listed explicitly are remembered as experimenters, and never
+        # the person being cropped: picking someone must not silently relabel anyone.
+        chosen = next((p["name"] for p in job["participants"] if p["id"] == pid), "")
+        for name in body.get("experimenters", []):
+            if any(p["name"] == name and not p.get("anon") for p in job["participants"]) and name != chosen \
+                    and not any(names_match(name, e) for e in settings["experimenters"]):
+                settings["experimenters"].append(name)
+        # people without a name label can be remembered by face instead; never the child
+        for item in body.get("remember_faces", []):
+            fpid = int(item.get("pid", -1))
+            vectors = (job_faces.get(jid) or {}).get(fpid)
+            if fpid != pid and vectors and any(p["id"] == fpid for p in job["participants"]):
+                remember_face(str(item.get("name", "")), vectors)
+                for p in job["participants"]:
+                    if p["id"] == fpid:
+                        p["experimenter"], p["name"] = True, str(item.get("name", "")).strip() or p["name"]
+        save_settings()
+        enqueue(job, "render")
+        save_job(job)
+        for other in jobs.values():
+            if other["status"] == "choose" and other is not job:
+                if apply_known_faces(other):
+                    save_job(other)
+                opid = resolve_child(other)
+                if opid is not None:
+                    other["child_pid"] = opid
+                    enqueue(other, "render")
+                    save_job(other)
+    return public(job)
+
+
+@app.post("/api/jobs/{jid}/overrides")
+async def set_overrides(jid: str, request: Request):
+    job = get_job(jid)
+    body = await request.json()
+    if job["status"] not in ("done", "error") or job["child_pid"] is None:
+        raise HTTPException(409, "job is busy")
+    clean = []
+    for ov in body.get("overrides", []):
+        item = {"start": float(ov["start"]), "end": float(ov["end"])}
+        if item["end"] <= item["start"]:
+            continue
+        if ov.get("mode") == "hold":
+            item["mode"] = "hold"
+        elif ov.get("box"):
+            item["box"] = [int(round(float(v))) for v in ov["box"]]
+        else:
+            item["box"] = None
+        clean.append(item)
+    with lock:
+        job["overrides"] = clean
+        enqueue(job, "render")
+        save_job(job)
+    return public(job)
+
+
+@app.post("/api/jobs/{jid}/reviewed")
+async def set_reviewed(jid: str, request: Request):
+    job = get_job(jid)
+    body = await request.json()
+    with lock:
+        job["reviewed"] = bool(body.get("reviewed"))
+        save_job(job)
+    return public(job)
+
+
+def summary_text(rows: list[tuple[dict, str]]) -> str:
+    """One row per video, for keeping track of a batch (opens in Excel)."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["video", "cropped_person", "duration_s", "visible_pct", "missing_s", "review_spans",
+                "review_s", "window_changes", "manual_fixes", "reviewed", "exported_file"])
+    for j, fname in rows:
+        sm = j.get("summary") or {}
+        w.writerow([j["name"], j.get("child_name", ""), sm.get("duration", ""), sm.get("visible_pct", ""),
+                    sm.get("missing_s", ""), sm.get("review_n", ""), sm.get("review_s", ""),
+                    sm.get("layout_changes", ""), len(j.get("overrides") or []),
+                    "yes" if j.get("reviewed") else "no", fname])
+    return "\ufeff" + buf.getvalue()  # BOM so Excel reads it as UTF-8
+
+
+@app.post("/api/pick_folder")
+async def pick_folder(request: Request):
+    """Show the system's folder dialog on this computer and return the chosen path."""
+    body = await request.json()
+    start = str(body.get("start") or "")
+    if not Path(start).is_dir():
+        start = ""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        r = await asyncio.to_thread(subprocess.run, [sys.executable, "-c", FOLDER_DIALOG, start],
+                                    capture_output=True, timeout=900, creationflags=flags)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(500, f"Could not open the folder dialog ({e}). Type the path instead.")
+    if r.returncode != 0:
+        raise HTTPException(500, "Could not open the folder dialog. Type the path instead.")
+    path = r.stdout.decode("utf-8", "replace").strip()
+    return {"path": str(Path(path)) if path else ""}
+
+
+@app.post("/api/export")
+async def export(request: Request):
+    """Copy finished results to a folder the user chose."""
+    body = await request.json()
+    raw = str(body.get("dest") or "").strip().strip('"')
+    if not raw or not Path(raw).is_absolute():
+        raise HTTPException(400, "Choose a folder to export to (a full path such as D:\\Study\\cropped).")
+    dest = Path(raw)
+    want = body.get("include") or {}
+    with lock:
+        chosen = [jobs[i] for i in body.get("ids", []) if i in jobs and jobs[i]["status"] == "done"
+                  and jobs[i].get("output") and Path(jobs[i]["output"]).exists()]
+    if not chosen:
+        raise HTTPException(400, "None of the selected videos has a finished result to export.")
+    if not any(want.get(k) for k in ("video", "segments", "report", "summary")):
+        raise HTTPException(400, "Tick at least one kind of file to save.")
+
+    # plan first, so that nothing is written if the user still has to confirm replacing files
+    plan: list[tuple[dict, str, Path]] = []
+    stems: dict[str, int] = {}
+    rows = []
+    for j in sorted(chosen, key=lambda j: j["name"]):
+        stem = Path(j["name"]).stem
+        stems[stem] = stems.get(stem, 0) + 1
+        if stems[stem] > 1:  # two sources with the same file name
+            stem = f"{stem}_{stems[stem]}"
+        rows.append((j, f"{stem}_child.mp4"))
+        if want.get("video"):
+            plan.append((j, "video", dest / f"{stem}_child.mp4"))
+        if want.get("segments"):
+            plan.append((j, "segments", dest / f"{stem}_segments.csv"))
+        if want.get("report"):
+            plan.append((j, "report", dest / f"{stem}_report.json"))
+    targets = [t for _, _, t in plan] + ([dest / "crop_summary.csv"] if want.get("summary") else [])
+    existing = [t.name for t in targets if t.exists()]
+    if existing and not body.get("overwrite"):
+        return {"conflicts": existing[:8], "n_conflicts": len(existing)}
+
+    def run():
+        dest.mkdir(parents=True, exist_ok=True)
+        for j, kind, target in plan:
+            segs = read_json(JOBDIR / j["id"] / "segments.json")
+            if kind == "video":
+                # results made by older versions already sit in their folder under this name
+                if Path(j["output"]).resolve() != target.resolve():
+                    shutil.copyfile(j["output"], target)
+            elif kind == "segments":
+                timeline.write_csv(segs, target)
+            else:
+                report = {
+                    "source": j["src"], "video": j["video"], "render": j.get("render"),
+                    "cropped_person": {"pid": j["child_pid"], "name": j.get("child_name", "")},
+                    "participants": j["participants"], "summary": j["summary"], "reviewed": bool(j.get("reviewed")),
+                    "manual_overrides": j["overrides"], "segments": segs, "flag_meanings": timeline.FLAG_TEXT,
+                    "exported": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                target.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        if want.get("summary"):
+            # newline="": the csv module already wrote \r\n line ends
+            with open(dest / "crop_summary.csv", "w", encoding="utf-8", newline="") as f:
+                f.write(summary_text(rows))
+
+    try:
+        await asyncio.to_thread(run)
+    except OSError as e:
+        raise HTTPException(400, f"Could not write to {dest}: {e.strerror or e}")
+    with lock:
+        for j in chosen:
+            j["exported"] = {"dir": str(dest), "time": time.time(), "rev": j["rev"]}
+            save_job(j)
+        settings["export_dir"] = str(dest)
+        save_settings()
+    return {"videos": len(chosen), "files": len(targets), "dir": str(dest)}
+
+
+@app.post("/api/open_folder")
+async def open_folder(request: Request):
+    """Open a folder in the file manager. Only folders this app exported to."""
+    body = await request.json()
+    p = Path(str(body.get("path") or ""))
+    known = {settings.get("export_dir")} | {(j.get("exported") or {}).get("dir") for j in jobs.values()}
+    if str(p) not in known or not p.is_dir():
+        raise HTTPException(400, "That folder is not available.")
+    if hasattr(os, "startfile"):
+        os.startfile(p)  # noqa: S606 - opens the folder in Explorer
+    return {"path": str(p)}
+
+
+@app.post("/api/jobs/{jid}/retry")
+def retry(jid: str):
+    job = get_job(jid)
+    if job["status"] in ("queued", "analyzing", "rendering"):
+        raise HTTPException(409, "job is busy")
+    with lock:
+        job["child_pid"] = None
+        job["overrides"] = []
+        enqueue(job, "analyze")
+        save_job(job)
+    return public(job)
+
+
+@app.delete("/api/jobs/{jid}")
+def delete_job(jid: str):
+    job = get_job(jid)
+    with lock:
+        cancels[jid].set()
+        jobs.pop(jid, None)
+    # Working files only: the analysis cache, the preview render and, for uploads, our
+    # own copy. Source videos added by path and anything already exported are left alone.
+    shutil.rmtree(JOBDIR / jid, ignore_errors=True)
+    if job["origin"] == "upload":
+        src = Path(job["src"])
+        if src.parent == UPLOADS:
+            for _ in range(20):  # a worker may still hold the file for a moment
+                try:
+                    src.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    time.sleep(0.25)
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/thumb/{name}")
+def thumb(jid: str, name: str):
+    get_job(jid)
+    f = JOBDIR / jid / Path(name).name
+    if not f.exists() or f.suffix != ".jpg":
+        raise HTTPException(404)
+    return FileResponse(f)
+
+
+@app.get("/api/jobs/{jid}/source")
+def source(jid: str):
+    return FileResponse(get_job(jid)["src"])
+
+
+@app.get("/api/jobs/{jid}/output")
+def output(jid: str):
+    job = get_job(jid)
+    if not job["output"] or not Path(job["output"]).exists():
+        raise HTTPException(404)
+    return FileResponse(job["output"], headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/settings")
+async def update_settings(request: Request):
+    body = await request.json()
+    with lock:
+        if "experimenters" in body:
+            settings["experimenters"] = [str(s).strip() for s in body["experimenters"] if str(s).strip()]
+        if "forget_face" in body:
+            settings["known_faces"] = [e for e in settings["known_faces"] if e["name"] != body["forget_face"]]
+        if "out_height" in body:
+            settings["out_height"] = max(120, min(1080, int(body["out_height"]))) & ~1
+        save_settings()
+        # a new experimenter list may settle videos that were waiting for a choice
+        for job in jobs.values():
+            if job["status"] == "choose":
+                pid = resolve_child(job)
+                if pid is not None:
+                    job["child_pid"] = pid
+                    enqueue(job, "render")
+                    save_job(job)
+    return public_settings()

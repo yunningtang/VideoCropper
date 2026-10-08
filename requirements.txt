@@ -1,0 +1,5 @@
+av
+rapidocr-onnxruntime
+fastapi
+uvicorn[standard]
+numpy
