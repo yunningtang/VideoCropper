@@ -29,7 +29,15 @@ class TileDetector:
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads
         so.log_severity_level = 3
-        self.sess = ort.InferenceSession(str(path), so, providers=["CPUExecutionProvider"])
+        # the GPU when the installed onnxruntime offers one (onnxruntime-directml on
+        # Windows: any DirectX 12 card, no CUDA needed), else the CPU
+        avail = ort.get_available_providers()
+        providers = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in avail]
+        if "DmlExecutionProvider" in providers:
+            so.enable_mem_pattern = False
+            so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self.sess = ort.InferenceSession(str(path), so, providers=providers + ["CPUExecutionProvider"])
+        self.provider = self.sess.get_providers()[0]
         inp = self.sess.get_inputs()[0]
         self.name = inp.name
         self.size = int(inp.shape[2]), int(inp.shape[3])  # (h, w), fixed at export

@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 import numpy as np
 
 from . import timeline, work
-from .analyze import FACE_MIN_VOTES, FACE_SAME, Cancelled, FaceReader, names_match
+from .analyze import FACE_MIN_VOTES, FACE_SAME, Cancelled, FaceReader, code_version, names_match
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "workspace"
@@ -34,7 +34,9 @@ JOBDIR = WORK / "jobs"
 SETTINGS_FILE = WORK / "settings.json"
 STATIC = Path(__file__).resolve().parent / "static"
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".wmv"}
-N_WORKERS = 2
+N_WORKERS = 4        # videos analysed or rendered at the same time (each in its own process)
+MAX_ATTEMPTS = 2     # a task that fails is run once more before the video is marked as failed
+CACHE = WORK / "cache"  # analysis results by video content, so a re-added video is not analysed again
 
 # known_faces: experimenters remembered by face, [{"name", "model", "vectors": [[...], ...]}].
 # Only face descriptions of people the user marked as experimenters are ever stored.
@@ -136,11 +138,52 @@ def new_job(src: Path, origin: str) -> dict:
     return job
 
 
-def enqueue(job: dict, task: str):
+def enqueue(job: dict, task: str, attempt: int = 0):
     job["status"] = "queued"
     job["progress"] = 0.0
     job["next"] = task
+    job["attempt"] = attempt
     tasks.put((job["id"], task))
+
+
+# -- analysis cache --------------------------------------------------------
+def video_key(src: str) -> str:
+    """Fingerprint of a video's content (size, first and last megabyte), the analysis
+    code and the remembered faces: the same video gives the same analysis as long as
+    none of these changed."""
+    import hashlib
+    p = Path(src)
+    n = p.stat().st_size
+    h = hashlib.sha1(str(n).encode())
+    with open(p, "rb") as f:
+        h.update(f.read(1 << 20))
+        if n > 2 << 20:
+            f.seek(-(1 << 20), 2)
+            h.update(f.read(1 << 20))
+    h.update(json.dumps(settings.get("known_faces") or [], sort_keys=True).encode())
+    return f"{h.hexdigest()[:16]}-{code_version()}"
+
+
+def cache_get(key: str, jdir: Path) -> dict | None:
+    """Copy a cached analysis (result and participant pictures) into the job's folder."""
+    d = CACHE / key
+    if not (d / "analysis.json").exists():
+        return None
+    jdir.mkdir(parents=True, exist_ok=True)
+    for f in d.iterdir():
+        shutil.copyfile(f, jdir / f.name)
+    res = read_json(jdir / "analysis.json")
+    # face descriptions are never cached (the child's would outlive the job), so a
+    # cached video cannot teach a new face; Re-analyze runs a fresh analysis
+    return {"participants": res["participants"], "video": res["video"], "faces": {}}
+
+
+def cache_put(key: str, jdir: Path):
+    d = CACHE / key
+    d.mkdir(parents=True, exist_ok=True)
+    for f in jdir.iterdir():
+        if f.name == "analysis.json" or (f.suffix == ".jpg" and f.name.startswith("p")):
+            shutil.copyfile(f, d / f.name)
 
 
 def set_status(job: dict, status: str, **extra):
@@ -267,8 +310,13 @@ def worker():
                 set_status(job, "analyzing", progress=0.0, error="", started=time.time())
                 t0 = time.time()
                 jdir.mkdir(parents=True, exist_ok=True)
-                res = work.run(work.analyze_task, (job["src"], str(jdir), settings.get("known_faces") or []),
-                               progress, cancel.is_set)
+                key = video_key(job["src"])
+                res = None if job.pop("fresh", False) else cache_get(key, jdir)
+                job["cached"] = res is not None
+                if res is None:
+                    res = work.run(work.analyze_task, (job["src"], str(jdir), settings.get("known_faces") or []),
+                                   progress, cancel.is_set)
+                    cache_put(key, jdir)
                 save_faces(jid, res["faces"])
                 job["took"]["analyze"] = round(time.time() - t0, 1)
                 job["participants"] = res["participants"]
@@ -299,14 +347,22 @@ def worker():
         except Cancelled:
             pass
         except Exception as e:  # keep the worker alive; show the failure on the job
-            (jdir / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
-            set_status(job, "error", error=f"{type(e).__name__}: {e}")
+            jdir.mkdir(parents=True, exist_ok=True)
+            with open(jdir / "error.log", "a", encoding="utf-8") as f:
+                f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {task}, attempt {job.get('attempt', 0) + 1}\n{traceback.format_exc()}\n")
+            if job.get("attempt", 0) + 1 < MAX_ATTEMPTS and not cancel.is_set():
+                # a decoder hiccup or a file briefly locked by another program: once more
+                with lock:
+                    enqueue(job, task, attempt=job.get("attempt", 0) + 1)
+                    save_job(job)
+            else:
+                set_status(job, "error", error=f"{type(e).__name__}: {e}")
 
 
 def public(job: dict) -> dict:
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "participants", "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported", "notice")
+            "reviewed", "started", "exported", "notice", "cached", "attempt")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     return out
@@ -592,6 +648,7 @@ def retry(jid: str):
         job["child_pid"] = None
         job["overrides"] = []
         job["notice"] = ""
+        job["fresh"] = True  # the user asked for a new analysis: do not serve the cached one
         enqueue(job, "analyze")
         save_job(job)
     return public(job)

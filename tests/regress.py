@@ -73,12 +73,8 @@ def check_detect(videos):
 
 
 def code_hash():
-    h = hashlib.sha1()
-    for f in ("analyze.py", "detect.py", "tiledet.py", "models/tiles.onnx"):
-        p = ROOT / "zoomcrop" / f
-        if p.exists():
-            h.update(p.read_bytes())
-    return h.hexdigest()[:10]
+    from zoomcrop.analyze import code_version
+    return code_version()
 
 
 def analysis(vid):

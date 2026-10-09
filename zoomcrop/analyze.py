@@ -74,6 +74,19 @@ class Cancelled(Exception):
     pass
 
 
+def code_version() -> str:
+    """Fingerprint of everything that shapes an analysis result: the finder code and the
+    model. Analysis caches (the app's and the regression test's) are keyed by it."""
+    import hashlib
+    h = hashlib.sha1()
+    here = Path(__file__).resolve().parent
+    for f in ("analyze.py", "detect.py", "tiledet.py", "models/tiles.onnx"):
+        p = here / f
+        if p.exists():
+            h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
 @dataclass
 class Obs:
     """One tile seen in one frame."""

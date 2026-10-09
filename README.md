@@ -40,6 +40,23 @@ window to quit.
 Keyboard shortcuts in the review screen: Space play/pause, ← → 1 s (Shift: 5 s),
 `,` `.` one frame, P / N previous / next span to check.
 
+## Batches of videos
+
+- Add them by path (paste the folder), not by dropping: dropped files are copied into the
+  workspace, pasted paths are read in place.
+- Register the experimenters first (name or face), or every video stops to ask who the
+  child is.
+- Four videos run at a time, each in its own process. A video whose analysis fails is
+  retried once, then marked Failed with the reason in its `error.log`; the others carry
+  on. Analysis results are cached by video content (`workspace/cache`), so a video that
+  is removed and added again, or re-added after a restart, is not analysed twice.
+- With a graphics card and `onnxruntime-directml` installed (see `requirements.txt`),
+  the tile model runs on the GPU and analysis is roughly twice as fast. Without it,
+  everything runs on the CPU.
+- `server.log` records when the server started, a heartbeat every minute, and why it
+  stopped (window closed, Ctrl+C, logoff); a log that just stops means the process was
+  killed from outside.
+
 ## Exported files
 
 | File | Contents |

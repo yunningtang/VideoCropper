@@ -4,3 +4,6 @@ rapidocr-onnxruntime
 fastapi
 uvicorn[standard]
 numpy
+# GPU for the tile model (Windows, any DirectX 12 graphics card, no CUDA needed), optional:
+#   pip uninstall -y onnxruntime && pip install onnxruntime-directml
+# ("pip check" then reports rapidocr's onnxruntime requirement as unmet; it works, same module.)
