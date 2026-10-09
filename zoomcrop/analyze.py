@@ -32,6 +32,7 @@ import cv2
 import numpy as np
 
 from .detect import Tile, _edges, _lines, find_tiles, iou, work_edges
+from .tiledet import TileDetector, merge as merge_tiles
 
 SAMPLE_DT = 0.5      # seconds between analysed frames
 OCR_PERIOD = 5.0     # re-read an unchanged label at least this often
@@ -352,11 +353,13 @@ def _sides_present(gray, box, win: int = 4, need: float = 0.5) -> bool:
 
 class Analyzer:
     def __init__(self, reader: LabelReader | None = None, sample_dt: float = SAMPLE_DT,
-                 faces: FaceReader | None = None, known_faces: list[dict] | None = None):
+                 faces: FaceReader | None = None, known_faces: list[dict] | None = None, learned: bool = True):
         """known_faces: remembered experimenters, [{"name", "model", "vectors": [[...], ...]}]."""
         self.reader = reader or LabelReader()
         self.faces = faces or FaceReader()
         self.known = [k for k in (known_faces or []) if k.get("model") == FaceReader.MODEL and k.get("vectors")]
+        # the learned tile finder, when its model has been trained (tools/train.py)
+        self.tiledet = TileDetector() if learned and TileDetector.available() else None
         self.sample_dt = sample_dt
         self.best_crop: dict[str, tuple[int, bytes]] = {}
         self.tol = SAME_BOX_PX
@@ -512,10 +515,14 @@ class Analyzer:
         y0, y1, x0, x1 = rect
         return cv2.resize(gray[y0:y1, x0:x1], (32, 8), interpolation=cv2.INTER_AREA).astype(np.int16)
 
-    def _detect(self, gray, edges, prev: list[Obs]) -> list[Tile]:
-        """Tiles in this frame; borders a single frame shows badly are taken from the
+    def _detect(self, gray, edges, prev: list[Obs], frame: av.VideoFrame | None = None) -> list[Tile]:
+        """Tiles in this frame: the learned finder's boxes (when the model exists), with
+        the geometric finder's exact boxes where the two agree, plus geometric boxes the
+        model did not see; borders a single frame shows badly are taken from the
         averaged edge map when the tile was there a moment ago."""
         tiles = find_tiles(gray, edges=edges)
+        if self.tiledet is not None and frame is not None:
+            tiles = merge_tiles(self.tiledet.detect(frame.to_ndarray(format="bgr24"), gray), tiles)
         if self.acc is not None and prev:
             lost = [p for p in self._relevant(prev) if not any(iou(p.box, tl.box) >= 0.85 for tl in tiles)]
             if lost:
@@ -542,7 +549,7 @@ class Analyzer:
         tiles: list[Tile] = []
         # Two boxes with the same bottom-left corner would both read the same name label;
         # keep the one that is fully on screen, then the better supported, then the smaller.
-        for tl in sorted(self._detect(gray, (sh, sv), prev), key=lambda k: (k.clip != "", -k.score, k.w)):
+        for tl in sorted(self._detect(gray, (sh, sv), prev, frame), key=lambda k: (k.clip != "", -k.score, k.w)):
             if not any(abs(tl.x0 - k.x0) <= self.tol and abs(tl.y1 - k.y1) <= self.tol for k in tiles):
                 tiles.append(tl)
         # busy slides yield dozens of boxes that outscore a real tile; the ones that

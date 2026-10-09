@@ -14,3 +14,10 @@ tests/.run*.txt
 
 # partial renders
 *.part.mp4
+
+# training environment, datasets, training runs
+.venv-train/
+data/
+runs/
+*.log
+yolo11n.pt

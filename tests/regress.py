@@ -34,8 +34,14 @@ def frame_at(container, t):
 
 
 def check_detect(videos):
-    tot = hit = 0
-    ms = []
+    """Single-frame tile finding at the truth moments: the geometric finder alone, and,
+    when the learned model exists, the learned finder merged with it (what the
+    analysis actually uses)."""
+    from zoomcrop.tiledet import TileDetector, merge
+    det = TileDetector() if TileDetector.available() else None
+    tot = 0
+    hit = {"geometric": 0, "merged": 0}
+    ms = {"geometric": [], "merged": []}
     for vid in videos:
         truth = TRUTH["videos"][vid]
         cases = {}
@@ -44,24 +50,34 @@ def check_detect(videos):
                 cases.setdefault(t, []).append(box)
         with av.open(str(ROOT / TRUTH["files"][vid])) as c:
             for t, boxes in sorted(cases.items()):
-                gray = frame_at(c, t).to_ndarray(format="gray")
+                fr = frame_at(c, t)
+                gray = fr.to_ndarray(format="gray")
                 t0 = time.time()
-                tiles = find_tiles(gray)
-                ms.append((time.time() - t0) * 1000)
+                found = {"geometric": find_tiles(gray)}
+                ms["geometric"].append((time.time() - t0) * 1000)
+                if det is not None:
+                    bgr = fr.to_ndarray(format="bgr24")
+                    t0 = time.time()
+                    found["merged"] = merge(det.detect(bgr, gray), find_tiles(gray))
+                    ms["merged"].append((time.time() - t0) * 1000)
                 for b in boxes:
-                    best = max((iou(b, tl.box) for tl in tiles), default=0.0)
                     tot += 1
-                    hit += best >= 0.8
-                    if best < 0.8:
-                        print(f"  MISS {vid} t={t} {b} best {best:.2f}")
-    print(f"detect: {hit}/{tot} boxes found, {sum(ms) / len(ms):.0f} ms/frame mean, {max(ms):.0f} max")
-    return hit, tot
+                    for kind, tiles in found.items():
+                        best = max((iou(b, tl.box) for tl in tiles), default=0.0)
+                        hit[kind] += best >= 0.8
+                        if best < 0.8:
+                            print(f"  MISS {kind} {vid} t={t} {b} best {best:.2f}")
+    for kind in found:
+        print(f"detect ({kind}): {hit[kind]}/{tot} boxes found, {sum(ms[kind]) / len(ms[kind]):.0f} ms/frame mean, {max(ms[kind]):.0f} max")
+    return hit["merged" if det is not None else "geometric"], tot
 
 
 def code_hash():
     h = hashlib.sha1()
-    for f in ("analyze.py", "detect.py"):
-        h.update((ROOT / "zoomcrop" / f).read_bytes())
+    for f in ("analyze.py", "detect.py", "tiledet.py", "models/tiles.onnx"):
+        p = ROOT / "zoomcrop" / f
+        if p.exists():
+            h.update(p.read_bytes())
     return h.hexdigest()[:10]
 
 
