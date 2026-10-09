@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
+import os
 import queue
 import traceback
 from pathlib import Path
@@ -22,8 +23,34 @@ class WorkerFailed(Exception):
     pass
 
 
+def _die_with_parent(ppid: int):
+    """Exit when the server process is gone, so that a killed server leaves no
+    analysis running on in the background (on Windows a child outlives its parent)."""
+    import os
+    import threading
+    import time
+
+    def watch():
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x00100000, False, ppid)  # SYNCHRONIZE
+            if not h:
+                return
+            k32.WaitForSingleObject(h, 0xFFFFFFFF)
+        except Exception:
+            while True:  # non-Windows fallback: the parent pid changes when the parent dies
+                time.sleep(2)
+                if os.getppid() != ppid:
+                    break
+        os._exit(1)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 # -- child-side targets (module level, so that "spawn" can import them) ----------------
-def analyze_task(src: str, jdir: str, known_faces: list, q):
+def analyze_task(src: str, jdir: str, known_faces: list, ppid: int, q):
+    _die_with_parent(ppid)
     try:
         from .analyze import Analyzer
         an = Analyzer(known_faces=known_faces)
@@ -34,7 +61,8 @@ def analyze_task(src: str, jdir: str, known_faces: list, q):
         q.put(("error", traceback.format_exc()))
 
 
-def render_task(src: str, dst: str, segments: list, out_h: int, q):
+def render_task(src: str, dst: str, segments: list, out_h: int, ppid: int, q):
+    _die_with_parent(ppid)
     try:
         from .render import render
         info = render(src, dst, segments, out_h=out_h, progress=lambda p: q.put(("progress", float(p))))
@@ -50,7 +78,7 @@ def run(target: Callable, args: tuple, progress: Callable[[float], None], cancel
     killed) and WorkerFailed when the task reports an error or the process dies."""
     ctx = mp.get_context("spawn")
     q = ctx.Queue()
-    p = ctx.Process(target=target, args=(*args, q), daemon=True)
+    p = ctx.Process(target=target, args=(*args, os.getpid(), q), daemon=True)
     p.start()
     try:
         while True:
