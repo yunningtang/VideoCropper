@@ -21,3 +21,5 @@ data/
 runs/
 *.log
 yolo11n.pt
+weights/
+.vscode/
