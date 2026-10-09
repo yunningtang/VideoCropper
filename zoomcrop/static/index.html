@@ -30,7 +30,7 @@ html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  display: grid; grid-template-rows: auto 1fr; overflow: hidden;
+  display: grid; grid-template-rows: 1fr; overflow: hidden;
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -55,11 +55,9 @@ input[type=text], input[type=number], select {
   border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 5px 9px; min-width: 0; min-height: 30px;
 }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
-header {
-  display: flex; align-items: center; gap: 10px; padding: 9px 18px; background: var(--panel);
-  border-bottom: 1px solid var(--line); flex-wrap: wrap;
-}
 .spacer { flex: 1; }
+.sidefoot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.sidefoot button { flex: 1; }
 .layout { display: grid; grid-template-columns: minmax(250px, 330px) 1fr; min-height: 0; }
 /* the sidebar is set apart by its background alone: no rules or borders around the list */
 aside { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
@@ -232,14 +230,9 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<header>
-  <h1 class="sr">Zoom Child Crop</h1>
-  <span class="spacer"></span>
-  <button id="openSettings">Settings</button>
-  <button id="openExport" class="primary" title="Save finished results to a folder you choose">Export…</button>
-</header>
 <div class="layout">
   <aside aria-label="Videos">
+    <h1 class="sr">Zoom Child Crop</h1>
     <div class="drop" id="drop" role="button" tabindex="0">
       <strong>Drop videos or a folder here</strong>
       or click to choose files (mp4, mov, mkv …)
@@ -253,6 +246,10 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
     <div class="filters" id="filters" role="group" aria-label="Filter videos"></div>
     <div class="overall" id="overall" role="status"></div>
     <ul class="jobs" id="jobs"></ul>
+    <div class="sidefoot">
+      <button id="openSettings">Settings</button>
+      <button id="openExport" class="primary" title="Save finished results to a folder you choose">Export…</button>
+    </div>
   </aside>
   <main id="main" tabindex="-1"></main>
 </div>

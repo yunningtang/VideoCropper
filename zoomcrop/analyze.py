@@ -37,6 +37,9 @@ from .tiledet import TileDetector, merge as merge_tiles
 SAMPLE_DT = 0.5      # seconds between analysed frames
 OCR_PERIOD = 5.0     # re-read an unchanged label at least this often
 FULL_PERIOD = 5.0    # run the full detector at least this often, even if nothing seems to change
+LEARNED_PERIOD = 0.0 # run the learned tile finder at least this often, even if the geometric one found every known
+                     # window. 0 = on every full detection: skipping it when the geometric finder "agrees with
+                     # itself" lets a wrong box persist (P259 6:15), and the model is what corrects it
 SAME_BOX_PX = 6      # max coordinate difference (at 1080p) to treat two boxes as the same tile
 THUMB_W, THUMB_H = 32, 18
 SCENE_CELL = 20      # px per cell of the coarse image used to notice changes on screen
@@ -360,6 +363,8 @@ class Analyzer:
         self.known = [k for k in (known_faces or []) if k.get("model") == FaceReader.MODEL and k.get("vectors")]
         # the learned tile finder, when its model has been trained (tools/train.py)
         self.tiledet = TileDetector() if learned and TileDetector.available() else None
+        self.learned_t = -1e9
+        self.n_learned = 0
         self.sample_dt = sample_dt
         self.best_crop: dict[str, tuple[int, bytes]] = {}
         self.tol = SAME_BOX_PX
@@ -515,14 +520,22 @@ class Analyzer:
         y0, y1, x0, x1 = rect
         return cv2.resize(gray[y0:y1, x0:x1], (32, 8), interpolation=cv2.INTER_AREA).astype(np.int16)
 
-    def _detect(self, gray, edges, prev: list[Obs], frame: av.VideoFrame | None = None) -> list[Tile]:
-        """Tiles in this frame: the learned finder's boxes (when the model exists), with
-        the geometric finder's exact boxes where the two agree, plus geometric boxes the
-        model did not see; borders a single frame shows badly are taken from the
-        averaged edge map when the tile was there a moment ago."""
+    def _detect(self, gray, edges, prev: list[Obs], frame: av.VideoFrame | None = None, t: float = 0.0) -> list[Tile]:
+        """Tiles in this frame: the geometric finder's exact boxes, checked against the
+        learned finder (when the model exists) whenever a known window was not found
+        again, and every LEARNED_PERIOD seconds anyway, so that a window the geometric
+        finder cannot see (menu over it, content touching the border) is still found
+        and a phantom rectangle straddling two tiles is dropped. Borders a single frame
+        shows badly are taken from the averaged edge map when the tile was there a
+        moment ago."""
         tiles = find_tiles(gray, edges=edges)
         if self.tiledet is not None and frame is not None:
-            tiles = merge_tiles(self.tiledet.detect(frame.to_ndarray(format="bgr24"), gray), tiles)
+            known = self._relevant(prev)
+            lost = any(not any(iou(p.box, tl.box) >= 0.85 for tl in tiles) for p in known)
+            if lost or not known or abs(t - self.learned_t) >= LEARNED_PERIOD:
+                self.learned_t = t
+                self.n_learned += 1
+                tiles = merge_tiles(self.tiledet.detect(frame.to_ndarray(format="bgr24"), gray), tiles)
         if self.acc is not None and prev:
             lost = [p for p in self._relevant(prev) if not any(iou(p.box, tl.box) >= 0.85 for tl in tiles)]
             if lost:
@@ -549,7 +562,7 @@ class Analyzer:
         tiles: list[Tile] = []
         # Two boxes with the same bottom-left corner would both read the same name label;
         # keep the one that is fully on screen, then the better supported, then the smaller.
-        for tl in sorted(self._detect(gray, (sh, sv), prev, frame), key=lambda k: (k.clip != "", -k.score, k.w)):
+        for tl in sorted(self._detect(gray, (sh, sv), prev, frame, t), key=lambda k: (k.clip != "", -k.score, k.w)):
             if not any(abs(tl.x0 - k.x0) <= self.tol and abs(tl.y1 - k.y1) <= self.tol for k in tiles):
                 tiles.append(tl)
         # busy slides yield dozens of boxes that outscore a real tile; the ones that
@@ -798,8 +811,8 @@ class Analyzer:
             "video": {"width": W, "height": H, "fps": fps, "duration": duration, "frames": n},
             "participants": participants,
             "samples": out_samples,
-            "stats": {"ocr_calls": self.n_ocr, "full_detections": self.n_full, "samples": len(samples),
-                      "tracks": len(self.tracks), "rescued_tiles": self.n_rescued},
+            "stats": {"ocr_calls": self.n_ocr, "full_detections": self.n_full, "learned_detections": self.n_learned,
+                      "samples": len(samples), "tracks": len(self.tracks), "rescued_tiles": self.n_rescued},
         }
 
     # -- who is who -----------------------------------------------------------

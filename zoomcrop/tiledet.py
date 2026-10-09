@@ -22,7 +22,7 @@ NMS_IOU = 0.5
 
 
 class TileDetector:
-    def __init__(self, path: Path = MODEL_FILE, threads: int = 4):
+    def __init__(self, path: Path = MODEL_FILE, threads: int = 8):
         import onnxruntime as ort
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads
@@ -85,17 +85,19 @@ class TileDetector:
 def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
     """The learned boxes come first; geometric boxes that overlap none of them are kept
     (they are exact when they exist). A geometric box that agrees with a learned one
-    replaces it, since its sides are measured rather than regressed."""
+    replaces it, since its sides are measured rather than regressed. A geometric box
+    that partly overlaps a learned one without being it is a phantom: a rectangle
+    straddling two neighbouring tiles, or a piece of one, and is dropped."""
     out = []
     used = set()
     for tl in learned:
-        twin = next((g for g in geometric if iou(g.box, tl.box) >= 0.7), None)
+        twin = max((g for g in geometric if iou(g.box, tl.box) >= 0.7), key=lambda g: iou(g.box, tl.box), default=None)
         if twin is not None and twin.score >= 0.6:
             out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut))
             used.add(id(twin))
         else:
             out.append(tl)
     for g in geometric:
-        if id(g) not in used and all(iou(g.box, o.box) < 0.5 for o in out):
+        if id(g) not in used and all(iou(g.box, o.box) < 0.25 for o in out):
             out.append(g)
     return out

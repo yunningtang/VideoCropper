@@ -34,6 +34,7 @@ FLAG_TEXT = {
     "manual": "Set by hand",
 }
 REVIEW_FLAGS = ("filled", "held", "unsure", "look", "camera_off")
+SPLIT_FLAGS = {"held", "unsure", "inferred", "look", "camera_off"}  # a segment holds one of these states, not a mix
 
 NOTICE_TEXT = {
     "no_experimenter": "Nobody in this video was recognised as an experimenter, so the only person found "
@@ -194,6 +195,10 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
             elif last["box"] is not None:
                 ref = np.median(np.array(cur_boxes), axis=0)
                 same = bool(np.abs(ref - np.array(box)).max() <= tol)
+            # a moment the pipeline was unsure about must not stretch over the whole
+            # span of the same box: cut the segment where the review marks change
+            if same and (flags & SPLIT_FLAGS) != (last["flags"] & SPLIT_FLAGS):
+                same = False
         if same:
             segs[-1]["flags"] |= flags
             if box is not None:
