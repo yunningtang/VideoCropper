@@ -39,8 +39,11 @@
 
 ## 它是怎么认的
 
-- **找窗口**：Zoom 的视频格子是固定 16:9 的矩形。程序找长直边，拼成矩形，
-  要求每条边都有足够的边缘像素支撑。被拖出屏幕一部分、或鼠标悬停时顶上多出标题栏的情况单独处理。
+- **找窗口**：两条路合起来用。一条是几何法：Zoom 的视频格子是固定 16:9 的矩形，程序找长直边，
+  拼成矩形，要求每条边都有足够的边缘像素支撑；边框清楚时它的框精确到像素。
+  另一条是学习型检测器（`zoomcrop/models/tiles.onnx`，一个小 YOLO 模型）：它认的是"这块是摄像头画面"，
+  不依赖边框，所以菜单盖住一半、鼠标悬停、白衣服贴白幻灯片时也能找到；它的框再贴到最近的真实边上。
+  两者一致时用几何法的框；模型找到而几何法没找到的，用模型的框。模型文件不存在时只用几何法。
 - **跟窗**：每 0.5 秒检查一次；位置连续的格子算同一条"轨迹"，窗口被拖动时也跟着走；
   格子里的画面突然整个换掉（Zoom 重新排了座位）就断开。发现布局变了，就回头逐帧找出变化发生在哪一帧。
   单帧里看不清的边（两个深色画面之间的细分隔线）用最近几秒的平均边缘图补上。
@@ -67,10 +70,30 @@
   `python tests/regress.py` 会对照人工核对过的框重跑一遍。其他布局（画廊视图、非 16:9 的窗口）没有测试过，
   先拿一两个视频试一下再批量跑。
 
+## 重新训练检测器
+
+不需要人工画框。标注来自工具自己核对过的时间线（包括它补洞的帧）、`tests/truth.json`
+里人工核对的框（作验证集）和自动合成的"菜单盖住、鼠标悬停、标题栏"图。
+
+```
+python -m venv .venv-train
+.venv-train\Scripts\pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+.venv-train\Scripts\pip install ultralytics onnx av opencv-python
+.venv\Scripts\python tools\dataset.py          # 导出 data/tiles（先分析没分析过的视频）
+.venv-train\Scripts\python tools\train.py      # 训练并导出 zoomcrop/models/tiles.onnx
+python tests\regress.py                         # 对照人工核对的框验证
+```
+
+处理的视频越多、核对过的越多，下次导出的标注就越多；每次 Manual fix 也会进入训练数据。
+应用本身只需要 onnxruntime，不需要 torch。
+
 ## 文件
 
 ```
 run.py / start.bat      启动
+tools/dataset.py        从已分析的视频导出检测器的训练数据
+tools/train.py          训练检测器并导出 onnx
+zoomcrop/tiledet.py     学习型找窗（onnxruntime），与几何法合并
 zoomcrop/detect.py      在一帧里找 16:9 的视频格子
 zoomcrop/analyze.py     全片分析：采样、跟窗、读名字、认脸、认人
 tests/regress.py        回归测试（tests/truth.json 是人工核对过的答案）
