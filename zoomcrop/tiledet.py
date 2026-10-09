@@ -19,6 +19,8 @@ from .detect import ASPECT, Tile, _snap, iou
 MODEL_FILE = Path(__file__).resolve().parent / "models" / "tiles.onnx"
 CONF = 0.35     # detections below this confidence are dropped
 NMS_IOU = 0.5
+TWIN_IOU = 0.5     # a geometric box overlapping a learned one this much is the same tile, measured exactly
+PHANTOM_IOU = 0.25  # ... overlapping less than TWIN_IOU but at least this much is a phantom and is dropped
 
 
 class TileDetector:
@@ -78,7 +80,7 @@ class TileDetector:
                 clip = ""  # it just touches the frame edge
             if x1 - x0 < 24 or y1 - y0 < 14:
                 continue
-            tiles.append(Tile(x0, y0, x1, y1, float(scores[i]), clip))
+            tiles.append(Tile(x0, y0, x1, y1, float(scores[i]), clip, src="model"))
         return tiles
 
 
@@ -91,13 +93,17 @@ def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
     out = []
     used = set()
     for tl in learned:
-        twin = max((g for g in geometric if iou(g.box, tl.box) >= 0.7), key=lambda g: iou(g.box, tl.box), default=None)
-        if twin is not None and twin.score >= 0.6:
+        # the model's box can be off by a sidebar's width (icons next to the tile get
+        # included); a geometric box covering more than half of it is the same tile,
+        # measured on its real edges
+        twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6),
+                   key=lambda g: iou(g.box, tl.box), default=None)
+        if twin is not None:
             out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut))
             used.add(id(twin))
         else:
             out.append(tl)
     for g in geometric:
-        if id(g) not in used and all(iou(g.box, o.box) < 0.25 for o in out):
+        if id(g) not in used and all(iou(g.box, o.box) < PHANTOM_IOU for o in out):
             out.append(g)
     return out

@@ -24,9 +24,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 import numpy as np
 
-from . import timeline
-from .analyze import FACE_MIN_VOTES, FACE_SAME, Analyzer, Cancelled, FaceReader, LabelReader, names_match
-from .render import render
+from . import timeline, work
+from .analyze import FACE_MIN_VOTES, FACE_SAME, Cancelled, FaceReader, names_match
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "workspace"
@@ -251,7 +250,7 @@ def remember_face(name: str, vectors: list):
 
 
 def worker():
-    reader = None
+    """Takes tasks off the queue and runs each in a child process (see work.py)."""
     while True:
         jid, task = tasks.get()
         job = jobs.get(jid)
@@ -265,14 +264,12 @@ def worker():
 
         try:
             if task == "analyze":
-                if reader is None:
-                    reader = LabelReader()
                 set_status(job, "analyzing", progress=0.0, error="", started=time.time())
                 t0 = time.time()
-                an = Analyzer(reader, known_faces=settings.get("known_faces"))
-                res = an.run(job["src"], thumb_dir=jdir, progress=progress, cancel=cancel.is_set)
-                save_faces(jid, an.face_vectors)
-                (jdir / "analysis.json").write_text(json.dumps(res), encoding="utf-8")
+                jdir.mkdir(parents=True, exist_ok=True)
+                res = work.run(work.analyze_task, (job["src"], str(jdir), settings.get("known_faces") or []),
+                               progress, cancel.is_set)
+                save_faces(jid, res["faces"])
                 job["took"]["analyze"] = round(time.time() - t0, 1)
                 job["participants"] = res["participants"]
                 job["video"] = res["video"]
@@ -293,8 +290,8 @@ def worker():
                 # The result stays in the workspace for review; nothing is written
                 # anywhere else until the user exports it.
                 out = jdir / "child.mp4"
-                info = render(job["src"], out, segs, out_h=int(settings["out_height"]),
-                              progress=progress, cancel=cancel.is_set)
+                info = work.run(work.render_task, (job["src"], str(out), segs, int(settings["out_height"])),
+                                progress, cancel.is_set)
                 job["took"]["render"] = round(time.time() - t0, 1)
                 (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
                 set_status(job, "done", progress=1.0, summary=timeline.summarize(segs), output=str(out),

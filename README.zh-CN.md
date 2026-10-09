@@ -101,6 +101,7 @@ zoomcrop/analyze.py     全片分析：采样、跟窗、读名字、认脸、�
 tests/regress.py        回归测试（tests/truth.json 是人工核对过的答案）
 zoomcrop/timeline.py    生成裁剪片段、标记、应用人工修正
 zoomcrop/render.py      裁剪并编码
+zoomcrop/work.py        在子进程里跑分析和渲染
 zoomcrop/server.py      本地网页服务
 zoomcrop/static/        网页
 workspace/              分析缓存、上传的副本、设置（可以整个删掉重来）

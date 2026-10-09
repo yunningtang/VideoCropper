@@ -536,6 +536,19 @@ class Analyzer:
                 self.learned_t = t
                 self.n_learned += 1
                 tiles = merge_tiles(self.tiledet.detect(frame.to_ndarray(format="bgr24"), gray), tiles)
+                # A box only the model gave jitters by a few pixels from frame to frame,
+                # which would break the track; when it is the known window with a small
+                # shift and the same size, keep the window's box.
+                for i, tl in enumerate(tiles):
+                    if tl.src != "model":
+                        continue
+                    p = max(known, key=lambda o: iou(o.box, tl.box), default=None)
+                    if p is None:
+                        continue
+                    pw = p.box[2] - p.box[0]
+                    if iou(p.box, tl.box) >= 0.6 and abs(tl.w - pw) <= 0.1 * pw \
+                            and max(abs(a - b) for a, b in zip(p.box, tl.box)) <= 0.08 * pw:
+                        tiles[i] = replace(tl, x0=p.box[0], y0=p.box[1], x1=p.box[2], y1=p.box[3])
         if self.acc is not None and prev:
             lost = [p for p in self._relevant(prev) if not any(iou(p.box, tl.box) >= 0.85 for tl in tiles)]
             if lost:

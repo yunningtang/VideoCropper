@@ -133,6 +133,7 @@ zoomcrop/analyze.py     whole-video analysis: sampling, tracking, names, faces, 
 tests/regress.py        regression test (tests/truth.json holds the hand-checked answers)
 zoomcrop/timeline.py    crop segments, flags, manual fixes
 zoomcrop/render.py      crop and encode
+zoomcrop/work.py        runs analysis and rendering in child processes
 zoomcrop/server.py      local web server
 zoomcrop/static/        the page
 workspace/              analysis cache, uploaded copies, settings (safe to delete)

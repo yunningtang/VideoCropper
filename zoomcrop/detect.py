@@ -42,6 +42,7 @@ class Tile:
     score: float  # edge coverage of the weakest verified side, 0..1
     clip: str = ""  # "", "bottom", "top", "left", "right"
     cut: int | None = None  # the floating panel ends here, hiding the rest of the tile (a y value)
+    src: str = "geo"  # "geo": measured from edges; "model": the learned finder's box, a few px loose
 
     @property
     def box(self) -> tuple[int, int, int, int]:
