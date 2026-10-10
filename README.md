@@ -71,6 +71,10 @@ dragged off-screen (the picture keeps its position).
 
 ## How it works
 
+A fuller description, step by step with the models and thresholds, is in
+[docs/pipeline.md](docs/pipeline.md).
+
+
 - **Finding tiles**: two finders combined. The geometric one knows Zoom tiles are 16:9
   rectangles: it looks for long straight edges, assembles rectangles and requires each
   side to be backed by enough edge pixels; when the border is visible its boxes are
