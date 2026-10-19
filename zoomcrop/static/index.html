@@ -132,6 +132,12 @@ figcaption span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis
 #box { position: absolute; border: 2px solid #ff3b4e; box-shadow: 0 0 0 1px rgba(255,255,255,.75); pointer-events: none; display: none; }
 #box.manual { border-color: #b6a3f5; border-style: dashed; }
 #drawlayer { position: absolute; inset: 0; display: none; cursor: crosshair; background: rgba(42, 86, 198, .1); touch-action: none; }
+#tilelayer { position: absolute; inset: 0; width: 100%; height: 100%; }
+#vout { display: block; width: 100%; height: 100%; }
+.strip { position: relative; height: 38px; margin-top: 4px; border-radius: 6px; background-size: 100% 100%; background-repeat: no-repeat; background-color: var(--line); cursor: col-resize; overflow: hidden; touch-action: none; }
+#range2 { position: absolute; top: 0; bottom: 0; background: rgba(42, 86, 198, .25); border-inline: 2px solid var(--accent); pointer-events: none; display: none; }
+#head2 { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); pointer-events: none; box-shadow: 0 0 0 1px var(--panel); }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 #drawlayer.on { display: block; }
 #drawrect { position: absolute; border: 2px dashed #8fb0ff; background: rgba(143, 176, 255, .2); display: none; pointer-events: none; }
 .nochild { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #c3cad6; font-size: 13px; pointer-events: none; }
@@ -539,6 +545,7 @@ async function showReview(j) {
   try { d = await api(`/api/jobs/${j.id}`); } catch (e) { toast(e.message, true); return; }
   if (S.sel !== j.id) return;
   const V = d.video, total = V.duration, sm = d.summary;
+  const keepT = R && R.jobId === j.id ? R.cur() : 0;  // position survives a rebuild after Apply
   const merged = [];  // adjacent segments of the same kind drawn as one block
   for (const s of d.segments) {
     const c = segClass(s), last = merged[merged.length - 1];
@@ -563,15 +570,16 @@ async function showReview(j) {
       <div><dt>To check</dt><dd class="${reviews.length ? "attn" : ""}">${plural(reviews.length, "span")}, ${reviewSecs.toFixed(1)} s</dd></div>
       <div><dt>Exported</dt><dd class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
         exportState(d) === "none" ? "not yet" : exportState(d) === "stale" ? "yes, but changed since" : `to ${esc(d.exported.dir)}`}</dd></div>
+      <div id="rstate"></div>
     </dl>
     <div class="players">
-      <figure><figcaption><span>Original · the red box is the current crop</span></figcaption>
+      <figure><figcaption><span>Original · red box = current crop · hover to pick a detected tile</span></figcaption>
         <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
-          <video id="vsrc" muted playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
-          <div id="box"></div><div id="drawrect"></div><div id="drawlayer"></div></div></figure>
-      <figure><figcaption><span>Cropped result (preview)</span></figcaption>
+          <video id="vsrc" playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
+          <div id="box"></div><canvas id="tilelayer"></canvas><div id="drawrect"></div><div id="drawlayer"></div></div></figure>
+      <figure><figcaption><span>Cropped result (live preview)</span></figcaption>
         <div class="stage" style="aspect-ratio:16/9">
-          <video id="vout" playsinline preload="auto" aria-label="Cropped result" src="/api/jobs/${j.id}/output?rev=${d.rev}"></video>
+          <canvas id="vout" width="640" height="360" aria-label="Cropped result"></canvas>
           <div class="nochild" id="nochild">The child is not on screen in this span</div></div></figure>
     </div>
     <div class="transport">
@@ -585,16 +593,19 @@ async function showReview(j) {
     <div class="timeline" id="tl" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
       ${merged.map(m => `<div class="seg ${m.c}" style="left:${m.start / total * 100}%;width:${(m.end - m.start) / total * 100}%"></div>`).join("")}
       <div id="range"></div><div id="head"></div></div>
+    <div class="strip" id="strip" title="Drag here to select the span to fix" style="background-image:url(/api/jobs/${j.id}/strip)">
+      <div id="range2"></div><div id="head2"></div></div>
     <div class="legend" aria-hidden="true">
       <span><i><b style="height:50%;background:var(--ok-fill)"></b></i>Normal (low block)</span>
       <span><i><b style="height:100%;background:var(--warn-fill)"></b></i>Check this (tall block)</span>
       <span><i><b style="height:100%;background:repeating-linear-gradient(45deg,var(--bad-fill) 0 3px,var(--bad-fill2) 3px 6px)"></b></i>Child not on screen (hatched)</span>
       <span><i><b style="height:100%;background:var(--manual-fill);border-top:3px solid var(--text)"></b></i>Set by hand (top line)</span></div>
     <p class="keys"><span><kbd>Space</kbd> play / pause</span><span><kbd>←</kbd> <kbd>→</kbd> 1 s (with <kbd>Shift</kbd> 5 s)</span>
-      <span><kbd>,</kbd> <kbd>.</kbd> one frame</span><span><kbd>P</kbd> <kbd>N</kbd> previous / next span to check</span></p>
+      <span><kbd>,</kbd> <kbd>.</kbd> one frame</span><span><kbd>P</kbd> <kbd>N</kbd> previous / next span to check</span>
+      <span><kbd>I</kbd> <kbd>O</kbd> span start / end at the playhead</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> undo / redo fixes</span></p>
     <div class="cols">
       <section class="card" aria-labelledby="hRev"><h3 id="hRev">Spans to check</h3>
-        <p class="desc">Click a time to jump there and look. If the crop is wrong, click Fix.</p>
+        <p class="desc">Click a time to jump there and look. If the crop is wrong, click Fix: the span is selected, then click the right tile on the original.</p>
         ${reviews.length ? `<ul class="rows" id="reviews">${reviews.map((r, i) => `<li>
           <button class="jump" data-i="${i}"><span class="chip ${r.c === "miss" ? "err" : "flag"}">${r.c === "miss" ? "No child" : "Check"}</span>
             <span>${fmt(r.start)} – ${fmt(r.end)}</span><span>${(r.end - r.start).toFixed(1)}s</span>
@@ -602,47 +613,63 @@ async function showReview(j) {
           <button class="ghost" data-fix="${i}" aria-label="Fix the span from ${fmt(r.start)} to ${fmt(r.end)}">Fix</button></li>`).join("")}</ul>`
           : `<p class="none">Nothing was flagged. It is still worth scrubbing through the timeline once before marking the video as reviewed.</p>`}</section>
       <section class="card" aria-labelledby="hFix" id="fixcard"><h3 id="hFix">Manual fix</h3>
-        <p class="desc">Pick a time span and say how it should be cropped. Add as many as you need, then export once.</p>
-        <fieldset><legend>Time span (seconds)</legend>
+        <p class="desc">Select a span (drag on the strip above, or <kbd>I</kbd> / <kbd>O</kbd>), then click the right tile on the original, or drag a box. The preview updates at once; the file is re-exported in the background.</p>
+        <fieldset><legend>Span (seconds)</legend>
           <div class="timegrid">
-            <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="faOut"></output><button id="faNow">Use current time</button>
-            <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="fbOut"></output><button id="fbNow">Use current time</button>
+            <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="faOut"></output><button id="faNow">Playhead</button>
+            <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}" aria-describedby="fErr"><output id="fbOut"></output><button id="fbNow">Playhead</button>
           </div><p class="ferr" id="fErr" role="alert"></p></fieldset>
-        <fieldset><legend>How to crop this span</legend>
+        <fieldset><legend>Crop for this span</legend>
           <label class="mode"><input type="radio" name="fmode" value="box" checked> Use this box</label>
           <div class="boxrow" id="boxrow">
             <label for="bx">Left</label><input type="number" id="bx" step="2"><label for="by">Top</label><input type="number" id="by" step="2">
             <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">pixels; height follows 16:9</span>
-            <button id="fDraw">Drag on the original</button><button id="fCur">Use current red box</button></div>
+            <button id="fDraw">Drag a box</button><button id="fCur">Current red box</button></div>
           <label class="mode"><input type="radio" name="fmode" value="hold"> Keep the box from just before this span</label>
           <label class="mode"><input type="radio" name="fmode" value="none"> No child (output black)</label>
           <p class="ferr" id="bErr" role="alert"></p></fieldset>
-        <button id="fAdd">Add to fix list</button>
+        <div class="quick"><button id="fAdd" class="primary">Add fix</button>
+          <button id="qHold" title="Add a fix for the selected span that keeps the previous box">Keep previous box</button>
+          <button id="qNone" title="Add a fix for the selected span with no child">No child</button>
+          <button id="undo" class="ghost" title="Undo (Ctrl+Z)">Undo</button><button id="redo" class="ghost" title="Redo (Ctrl+Y)">Redo</button></div>
         <ul class="ovs" id="ovs"></ul>
-        <div class="applyrow"><button class="primary" id="fApply" disabled>Apply and re-export</button><span id="applyNote"></span></div></section>
+        <div class="applyrow"><button class="primary" id="fApply" disabled>Apply</button><span id="applyNote"></span></div></section>
     </div>`;
 
-  const vsrc = $("#vsrc"), vout = $("#vout"), box = $("#box"), tl = $("#tl");
-  R = { d, reviews, overrides: d.overrides.map(o => ({...o})), dirty: false, drawing: false, raf: 0, n: 0 };
-  const cur = () => vout.currentTime || 0;
+  const vsrc = $("#vsrc"), vout = $("#vout"), ctx = vout.getContext("2d"), box = $("#box"), tl = $("#tl"), stripEl = $("#strip");
+  const tlayer = $("#tilelayer"), tctx = tlayer.getContext("2d");
+  R = { jobId: j.id, d, reviews, overrides: d.overrides.map(o => ({...o})), hist: [], redo: [], dirty: false, drawing: false, raf: 0, n: 0,
+        tiles: null, hover: null, cur: () => vsrc.currentTime || 0 };
+  const cur = R.cur;
   const segAt = t => { const sg = d.segments; let lo = 0, hi = sg.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (sg[m].start <= t + 1e-4) lo = m; else hi = m - 1; } return sg[lo]; };
-  const seek = t => { t = Math.max(0, Math.min(total - 0.01, t)); vout.currentTime = t; vsrc.currentTime = t; };
-  const toggle = () => { if (vout.paused) { vout.play(); vsrc.play().catch(() => {}); } else { vout.pause(); vsrc.pause(); } };
-  vout.addEventListener("play", () => $("#play").textContent = "Pause");
-  vout.addEventListener("pause", () => { $("#play").textContent = "Play"; vsrc.pause(); vsrc.currentTime = vout.currentTime; });
-  vout.addEventListener("error", () => toast("The cropped result cannot be played in this browser.", true));
-  vsrc.addEventListener("error", () => toast("This browser cannot play the original's format, so the side-by-side view is unavailable. The cropped result is not affected.", true));
+  // the box at time t once the fixes not yet applied are laid over the timeline
+  function effAt(t, upto = R.overrides.length) {
+    const s = segAt(t);
+    let out = s ? {box: s.box, flags: s.flags, manual: s.flags.includes("manual")} : {box: null, flags: [], manual: false};
+    for (let k = 0; k < upto; k++) {
+      const o = R.overrides[k];
+      if (!o.fresh || t < o.start || t >= o.end) continue;  // applied fixes are already in the segments
+      out = {manual: true, flags: ["manual"], box: o.mode === "hold" ? effAt(o.start - 0.001, k).box : (o.box || null)};
+    }
+    return out;
+  }
+  const seek = t => { t = Math.max(0, Math.min(total - 0.01, t)); vsrc.currentTime = t; };
+  const toggle = () => { if (vsrc.paused) vsrc.play().catch(() => {}); else vsrc.pause(); };
+  vsrc.addEventListener("play", () => $("#play").textContent = "Pause");
+  vsrc.addEventListener("pause", () => $("#play").textContent = "Play");
+  vsrc.addEventListener("error", () => toast("This browser cannot play the original's format, so the review screen cannot show it. The cropped result is not affected.", true));
+  vsrc.addEventListener("loadedmetadata", () => { if (keepT) seek(keepT); });
   $("#play").onclick = toggle;
-  $("#rate").onchange = e => { vout.playbackRate = vsrc.playbackRate = +e.target.value; };
-
+  $("#rate").onchange = e => { vsrc.playbackRate = +e.target.value; };
   $("#exportOne").onclick = () => openExport(j.id);
+  fetch(`/api/jobs/${j.id}/tiles`).then(r => r.ok ? r.json() : []).then(t => { if (R && R.jobId === j.id) R.tiles = t; }).catch(() => {});
 
   // reviewed mark: tracks progress through a batch
   const mark = $("#mark");
   const drawMark = () => { mark.textContent = j.reviewed ? "Mark as not reviewed" : "Reviewed, next video"; mark.className = j.reviewed ? "" : "primary"; };
   drawMark();
   mark.onclick = () => busy(mark, async () => {
-    if (!j.reviewed && unsaved() && !confirm("You have manual fixes that are not applied yet. Mark as reviewed anyway?")) return;
+    if (!j.reviewed && unsaved() && !confirm("You have fixes that are not applied yet. Mark as reviewed anyway?")) return;
     const to = !j.reviewed;
     await api(`/api/jobs/${j.id}/reviewed`, {json: {reviewed: to}}); j.reviewed = to; drawMark(); renderList();
     if (!to) return;
@@ -651,40 +678,94 @@ async function showReview(j) {
     if (next) { R.dirty = false; select(next.id); $("#main").focus(); } else toast("Marked. Every finished video in this batch has been reviewed.");
   });
 
+  // ----- live preview: the crop is cut out of the source video in the browser -----
+  function drawPreview(e) {
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 640, 360);
+    if (!e.box || vsrc.readyState < 2) return;
+    const [x0, y0, x1, y1] = e.box, w = x1 - x0, h = y1 - y0;
+    const sx0 = Math.max(0, x0), sy0 = Math.max(0, y0), sx1 = Math.min(V.width, x1), sy1 = Math.min(V.height, y1);
+    if (sx1 - sx0 < 2 || sy1 - sy0 < 2) return;
+    try { ctx.drawImage(vsrc, sx0, sy0, sx1 - sx0, sy1 - sy0, (sx0 - x0) / w * 640, (sy0 - y0) / h * 360, (sx1 - sx0) / w * 640, (sy1 - sy0) / h * 360); } catch (err) {}
+  }
   function frame() {
     const t = cur();
-    if (!vout.paused && !vsrc.seeking && Math.abs(vsrc.currentTime - t) > 0.15) vsrc.currentTime = t;
     $("#cur").textContent = fmt(t);
-    $("#head").style.left = `calc(${t / total * 100}% - 1px)`;
-    if (R.n++ % 30 === 0) { tl.setAttribute("aria-valuenow", t.toFixed(1)); tl.setAttribute("aria-valuetext", fmt(t)); }
-    const s = segAt(t);
-    if (s && s.box) {
-      const [x0, y0, x1, y1] = s.box;
+    $("#head").style.left = $("#head2").style.left = `calc(${t / total * 100}% - 1px)`;
+    if (R.n++ % 30 === 0) {
+      tl.setAttribute("aria-valuenow", t.toFixed(1)); tl.setAttribute("aria-valuetext", fmt(t));
+      const jj = S.jobs.find(x => x.id === j.id), rs = $("#rstate");
+      if (rs) rs.innerHTML = jj?.rendering ? `<dt>Preview file</dt><dd class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</dd>`
+        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `<dt>Preview file</dt><dd class="attn">waiting to re-export</dd>` : "";
+    }
+    const e = effAt(t);
+    if (e.box) {
+      const [x0, y0, x1, y1] = e.box;
       box.style.cssText = `display:block;left:${x0 / V.width * 100}%;top:${y0 / V.height * 100}%;width:${(x1 - x0) / V.width * 100}%;height:${(y1 - y0) / V.height * 100}%`;
-      box.className = s.flags.includes("manual") ? "manual" : "";
+      box.className = e.manual ? "manual" : "";
     } else box.style.display = "none";
-    $("#nochild").style.display = s && !s.box ? "flex" : "none";
+    $("#nochild").style.display = e.box ? "none" : "flex";
+    drawPreview(e);
+    drawTiles(t);
     // "only flagged" playback: skip from the end of one flagged span to just before the next
-    if ($("#only").checked && !vout.paused && !vout.seeking && !reviews.some(r => t >= r.start - 1.2 && t <= r.end + 0.6)) {
+    if ($("#only").checked && !vsrc.paused && !vsrc.seeking && !reviews.some(r => t >= r.start - 1.2 && t <= r.end + 0.6)) {
       const nx = reviews.find(r => r.start - 1 > t);
-      if (nx) seek(nx.start - 1); else { vout.pause(); toast("That was the last span to check."); }
+      if (nx) seek(nx.start - 1); else { vsrc.pause(); toast("That was the last span to check."); }
     }
     R.raf = requestAnimationFrame(frame);
   }
   R.raf = requestAnimationFrame(frame);
 
-  // timeline scrubbing (arrow keys work too, see onKey)
-  const tlTime = e => { const r = tl.getBoundingClientRect(); return (e.clientX - r.left) / r.width * total; };
-  tl.addEventListener("pointerdown", e => { tl.setPointerCapture(e.pointerId); seek(tlTime(e)); });
-  tl.addEventListener("pointermove", e => { if (tl.hasPointerCapture(e.pointerId)) seek(tlTime(e)); });
+  // ----- detected tiles at the playhead: hover to see them, click to take one -----
+  function tilesAt(t) {
+    const T = R.tiles; if (!T || !T.length) return [];
+    let lo = 0, hi = T.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (T[m][0] <= t + 1e-4) lo = m; else hi = m - 1; }
+    const cand = [T[lo], T[lo + 1]].filter(Boolean).sort((a, b) => Math.abs(a[0] - t) - Math.abs(b[0] - t))[0];
+    return cand && Math.abs(cand[0] - t) <= 0.6 ? cand[1] : [];
+  }
+  function drawTiles(t) {
+    const W = tlayer.clientWidth, H = tlayer.clientHeight;
+    if (!W) return;
+    if (tlayer.width !== W || tlayer.height !== H) { tlayer.width = W; tlayer.height = H; }
+    tctx.clearRect(0, 0, W, H);
+    if (R.drawing || !R.hover) return;  // outlines only while the mouse is over the picture
+    const kx = W / V.width, ky = H / V.height, [hx, hy] = R.hover;
+    let hit = null;
+    for (const tb of tilesAt(t)) {
+      const [x0, y0, x1, y1] = tb;
+      const inside = hx >= x0 && hx < x1 && hy >= y0 && hy < y1;
+      if (inside && (!hit || (x1 - x0) * (y1 - y0) < (hit[2] - hit[0]) * (hit[3] - hit[1]))) hit = tb;
+      tctx.strokeStyle = "rgba(255,255,255,.55)"; tctx.lineWidth = 1; tctx.setLineDash([4, 3]);
+      tctx.strokeRect(x0 * kx + .5, y0 * ky + .5, (x1 - x0) * kx - 1, (y1 - y0) * ky - 1);
+    }
+    R.hit = hit;
+    if (hit) {
+      tctx.setLineDash([]); tctx.lineWidth = 3; tctx.strokeStyle = "#2a56c6";
+      tctx.strokeRect(hit[0] * kx + 1.5, hit[1] * ky + 1.5, (hit[2] - hit[0]) * kx - 3, (hit[3] - hit[1]) * ky - 3);
+      tctx.fillStyle = "rgba(42,86,198,.15)"; tctx.fillRect(hit[0] * kx, hit[1] * ky, (hit[2] - hit[0]) * kx, (hit[3] - hit[1]) * ky);
+    }
+    tlayer.style.cursor = hit ? "pointer" : "default";
+  }
+  tlayer.addEventListener("pointermove", e => { const r = tlayer.getBoundingClientRect(); R.hover = [(e.clientX - r.left) / r.width * V.width, (e.clientY - r.top) / r.height * V.height]; });
+  tlayer.addEventListener("pointerleave", () => { R.hover = null; R.hit = null; });
+  tlayer.addEventListener("click", () => {
+    if (!R.hit) { toggle(); return; }  // a click on the picture itself plays / pauses, as before
+    const [x0, y0, x1] = R.hit;
+    bx.value = x0; by.value = y0; bw.value = x1 - x0; $("input[name=fmode][value=box]").checked = true; showBox();
+    if (fa.value === "" || fb.value === "") spanFromPlayhead();
+    $("#bErr").textContent = "";
+    toast("Box taken from that tile. Adjust the span if needed, then click Add fix.");
+  });
 
-  // ----- manual fix form -----
+  // ----- span selection: drag on the strip, I / O keys, Fix buttons -----
   const fa = $("#fa"), fb = $("#fb"), bx = $("#bx"), by = $("#by"), bw = $("#bw"), rect = $("#drawrect"), layer = $("#drawlayer");
   const mode = () => $("input[name=fmode]:checked").value;
   function showRange() {
-    const a = +fa.value, b = +fb.value, el = $("#range");
+    const a = +fa.value, b = +fb.value;
     $("#faOut").textContent = fa.value === "" ? "" : fmt(a); $("#fbOut").textContent = fb.value === "" ? "" : fmt(b);
-    if (b > a) el.style.cssText = `display:block;left:${a / total * 100}%;width:${(b - a) / total * 100}%`; else el.style.display = "none";
+    for (const el of [$("#range"), $("#range2")]) {
+      if (fa.value !== "" && fb.value !== "" && b > a) el.style.cssText = `display:block;left:${a / total * 100}%;width:${(b - a) / total * 100}%`; else el.style.display = "none";
+    }
   }
   function showBox() {  // preview of the typed / dragged box on the source video
     const x = +bx.value, y = +by.value, w = +bw.value;
@@ -693,61 +774,89 @@ async function showReview(j) {
     rect.style.cssText = `display:block;left:${x / V.width * 100}%;top:${y / V.height * 100}%;width:${w / V.width * 100}%;height:${w * 9 / 16 / V.height * 100}%`;
   }
   const setRange = (a, b) => { fa.value = a.toFixed(2); fb.value = b.toFixed(2); $("#fErr").textContent = ""; showRange(); };
+  function spanFromPlayhead() {  // the flagged span under the playhead, else the current segment
+    const t = cur(), r = reviews.find(r => t >= r.start - 0.05 && t <= r.end + 0.05), s = segAt(t);
+    if (r) setRange(r.start, r.end); else if (s) setRange(s.start, s.end);
+  }
   fa.oninput = fb.oninput = showRange;
   bx.oninput = by.oninput = bw.oninput = showBox;
   document.querySelectorAll("input[name=fmode]").forEach(r => r.onchange = showBox);
   $("#faNow").onclick = () => { fa.value = cur().toFixed(2); showRange(); };
   $("#fbNow").onclick = () => { fb.value = cur().toFixed(2); showRange(); };
   $("#fCur").onclick = () => {
-    const s = segAt(cur());
-    if (!s || !s.box) { $("#bErr").textContent = "There is no crop box at the current time. Move the playhead to a place where the red box is showing."; return; }
-    $("#bErr").textContent = ""; bx.value = s.box[0]; by.value = s.box[1]; bw.value = s.box[2] - s.box[0];
+    const e = effAt(cur());
+    if (!e.box) { $("#bErr").textContent = "There is no crop box at the current time. Move the playhead to a place where the red box is showing."; return; }
+    $("#bErr").textContent = ""; bx.value = e.box[0]; by.value = e.box[1]; bw.value = e.box[2] - e.box[0];
     $("input[name=fmode][value=box]").checked = true; showBox();
   };
+  // timeline: click or drag to scrub; strip: drag to select the span
+  const barTime = (el, e) => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(total, (e.clientX - r.left) / r.width * total)); };
+  tl.addEventListener("pointerdown", e => { tl.setPointerCapture(e.pointerId); seek(barTime(tl, e)); });
+  tl.addEventListener("pointermove", e => { if (tl.hasPointerCapture(e.pointerId)) seek(barTime(tl, e)); });
+  let dragA = null;
+  stripEl.addEventListener("pointerdown", e => { stripEl.setPointerCapture(e.pointerId); dragA = barTime(stripEl, e); vsrc.pause(); seek(dragA); });
+  stripEl.addEventListener("pointermove", e => { if (dragA === null) return; const t = barTime(stripEl, e); setRange(Math.min(dragA, t), Math.max(dragA, t)); seek(t); });
+  stripEl.addEventListener("pointerup", e => { if (dragA === null) return; const t = barTime(stripEl, e); if (Math.abs(t - dragA) < 0.05) spanFromPlayhead(); dragA = null; seek(+fa.value || t); });
 
   if (reviews.length) $("#reviews").addEventListener("click", e => {
     const fix = e.target.closest("[data-fix]"), go = e.target.closest(".jump");
     if (go) seek(Math.max(0, reviews[+go.dataset.i].start - 0.5));
-    if (fix) { const r = reviews[+fix.dataset.fix]; seek(r.start); setRange(r.start, r.end); $("#fixcard").scrollIntoView({block: "nearest"}); fa.focus(); }
+    if (fix) { const r = reviews[+fix.dataset.fix]; seek(r.start + 0.05); setRange(r.start, r.end); $("#fixcard").scrollIntoView({block: "nearest"}); toast("Span selected. Click the right tile on the original, or drag a box."); }
   });
   const jump = dir => { const t = cur(); const r = dir > 0 ? reviews.find(r => r.start > t + 0.3) : [...reviews].reverse().find(r => r.start < t - 0.8); if (r) seek(r.start); };
   $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
 
+  // ----- the list of fixes, with undo / redo -----
   const ovText = o => o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]}` : "no child";
   function drawOvs() {
     $("#ovs").innerHTML = R.overrides.map((o, i) => `<li><span>${fmt(o.start)} – ${fmt(o.end)}</span><span>${ovText(o)}</span>
       ${o.fresh ? `<span class="new">not applied</span>` : ""}<span class="spacer"></span>
       <button class="ghost danger" data-rm="${i}" aria-label="Delete the fix from ${fmt(o.start)} to ${fmt(o.end)}">Delete</button></li>`).join("");
     $("#fApply").disabled = !R.dirty;
-    $("#applyNote").textContent = R.dirty ? "There are changes that are not applied. Re-exporting takes about half a minute to a minute." : "";
+    $("#undo").disabled = !R.hist.length; $("#redo").disabled = !R.redo.length;
+    $("#applyNote").textContent = R.dirty ? "The preview already shows these fixes. Apply saves them; the file is re-exported in the background." : "";
   }
-  $("#ovs").addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if (b) { R.overrides.splice(+b.dataset.rm, 1); R.dirty = true; drawOvs(); } });
-  $("#fAdd").onclick = () => {
+  const snap = () => JSON.stringify(R.overrides);
+  const mutate = fn => { R.hist.push(snap()); R.redo = []; fn(); R.dirty = true; drawOvs(); };
+  const undo = () => { if (!R.hist.length) return; R.redo.push(snap()); R.overrides = JSON.parse(R.hist.pop()); R.dirty = true; drawOvs(); };
+  const redo = () => { if (!R.redo.length) return; R.hist.push(snap()); R.overrides = JSON.parse(R.redo.pop()); R.dirty = true; drawOvs(); };
+  $("#undo").onclick = undo; $("#redo").onclick = redo;
+  $("#ovs").addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if (b) mutate(() => R.overrides.splice(+b.dataset.rm, 1)); });
+  function spanOk() {
     const a = +fa.value, b = +fb.value;
-    if (fa.value === "" || fb.value === "" || !(b > a)) { $("#fErr").textContent = "Enter a start and an end time, with the end after the start. You can click Use current time, or click Fix in the list on the left."; fa.focus(); return; }
-    $("#fErr").textContent = "";
-    const o = {start: a, end: Math.min(b, total), fresh: true};
+    if (fa.value === "" || fb.value === "" || !(b > a)) { $("#fErr").textContent = "Select a span first: drag on the strip under the timeline, press I and O at the playhead, or click Fix in the list on the left."; return null; }
+    $("#fErr").textContent = ""; return [a, Math.min(b, total)];
+  }
+  function addFix(o) { mutate(() => R.overrides.push({...o, fresh: true})); toast("Added. The preview shows it; click Apply when you are done."); }
+  $("#fAdd").onclick = () => {
+    const ab = spanOk(); if (!ab) return;
+    const o = {start: ab[0], end: ab[1]};
     if (mode() === "hold") o.mode = "hold";
     else if (mode() === "none") o.box = null;
     else {
       const x = Math.round(+bx.value), y = Math.round(+by.value), w = Math.round(+bw.value);
-      if (bw.value === "" || !(w >= 60)) { $("#bErr").textContent = "No box yet. Drag one on the original, or click Use current red box and adjust the numbers (width at least 60)."; bw.focus(); return; }
+      if (bw.value === "" || !(w >= 60)) { $("#bErr").textContent = "No box yet. Click a detected tile on the original, drag a box, or use the current red box (width at least 60)."; return; }
       o.box = [x, y, x + w, y + Math.round(w * 9 / 16)];
     }
-    $("#bErr").textContent = "";
-    R.overrides.push(o); R.dirty = true; drawOvs(); toast("Added to the list. Click Apply and re-export when you are done.");
+    $("#bErr").textContent = ""; addFix(o);
   };
+  $("#qHold").onclick = () => { const ab = spanOk(); if (ab) addFix({start: ab[0], end: ab[1], mode: "hold"}); };
+  $("#qNone").onclick = () => { const ab = spanOk(); if (ab) addFix({start: ab[0], end: ab[1], box: null}); };
   $("#fApply").onclick = () => busy($("#fApply"), async () => {
-    await api(`/api/jobs/${j.id}/overrides`, {json: {overrides: R.overrides.map(({fresh, ...o}) => o)}});
-    R.dirty = false; toast("Submitted. Re-exporting now."); await poll();
+    const r = await api(`/api/jobs/${j.id}/overrides`, {json: {overrides: R.overrides.map(({fresh, ...o}) => o)}});
+    R.dirty = false;
+    S.shown = `${j.id}|done|${r.rev}|false`;  // the poll must not rebuild the screen a second time
+    await poll();
+    toast("Applied. The preview file is re-exported in the background.");
+    showReview(S.jobs.find(x => x.id === j.id) || j);
   });
-  drawOvs(); showBox();
+  drawOvs(); showBox(); showRange();
 
   // drag a 16:9 box on the source video (the number fields above are the non-drag way to do the same)
-  const setDraw = on => { R.drawing = on; layer.classList.toggle("on", on); $("#fDraw").textContent = on ? "Cancel (Esc)" : "Drag on the original"; };
+  const setDraw = on => { R.drawing = on; layer.classList.toggle("on", on); $("#fDraw").textContent = on ? "Cancel (Esc)" : "Drag a box"; };
   $("#fDraw").onclick = () => {
     if (R.drawing) return setDraw(false);
-    vout.pause(); $("input[name=fmode][value=box]").checked = true; setDraw(true);
+    vsrc.pause(); $("input[name=fmode][value=box]").checked = true; setDraw(true);
     toast("Press and drag on the original video to outline the child's tile. The shape stays 16:9.");
   };
   let start = null;
@@ -757,21 +866,24 @@ async function showReview(j) {
   const fill = e => { const [x, y, w] = shape(e), k = V.width / local(e)[2]; bx.value = Math.round(x * k); by.value = Math.round(y * k); bw.value = Math.round(w * k); showBox(); };
   layer.addEventListener("pointerdown", e => { layer.setPointerCapture(e.pointerId); start = local(e); });
   layer.addEventListener("pointermove", e => { if (start) fill(e); });
-  layer.addEventListener("pointerup", e => { if (!start) return; fill(e); start = null; setDraw(false); $("#bErr").textContent = ""; bw.focus(); });
+  layer.addEventListener("pointerup", e => { if (!start) return; fill(e); start = null; setDraw(false); $("#bErr").textContent = ""; if (fa.value === "" || fb.value === "") spanFromPlayhead(); bw.focus(); });
 
   R.onKey = e => {
     if ($("#settings").open || $("#export").open) return;
     if (e.key === "Escape" && R.drawing) { start = null; setDraw(false); return; }
-    const tag = e.target.tagName;
+    const tag = e.target.tagName, k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "z" || k === "y") && !/INPUT|SELECT|TEXTAREA/.test(tag)) { e.preventDefault(); if (k === "z" && e.shiftKey || k === "y") redo(); else undo(); return; }
     if (/INPUT|SELECT|TEXTAREA/.test(tag) || e.ctrlKey || e.metaKey || e.altKey) return;
-    const step = 1 / (V.fps || 25), k = e.key.toLowerCase();
+    const step = 1 / (V.fps || 25);
     if (e.code === "Space") { if (tag === "BUTTON" || tag === "A") return; e.preventDefault(); toggle(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); seek(cur() - (e.shiftKey ? 5 : 1)); }
     else if (e.key === "ArrowRight") { e.preventDefault(); seek(cur() + (e.shiftKey ? 5 : 1)); }
-    else if (e.key === ",") { vout.pause(); seek(cur() - step); }
-    else if (e.key === ".") { vout.pause(); seek(cur() + step); }
+    else if (e.key === ",") { vsrc.pause(); seek(cur() - step); }
+    else if (e.key === ".") { vsrc.pause(); seek(cur() + step); }
     else if (k === "n") jump(1);
     else if (k === "p") jump(-1);
+    else if (k === "i") { fa.value = cur().toFixed(2); if (fb.value !== "" && +fb.value <= +fa.value) fb.value = ""; showRange(); }
+    else if (k === "o") { fb.value = cur().toFixed(2); if (fa.value === "" || +fa.value >= +fb.value) fa.value = Math.max(0, +fb.value - 1).toFixed(2); showRange(); }
   };
   document.addEventListener("keydown", R.onKey);
 }

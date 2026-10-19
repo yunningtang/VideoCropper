@@ -366,7 +366,39 @@ def worker():
                             pass  # still being played; removed with the job, or by the next render
                 (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
                 set_status(job, "done", progress=1.0, summary=timeline.summarize(segs), output=str(out),
-                           render=info, rev=job["rev"] + 1, reviewed=False)
+                           render=info, rev=job["rev"] + 1, output_rev=job["rev"] + 1, reviewed=False)
+            if task == "rerender":
+                # A manual fix was applied: the timeline was rebuilt on the spot (set_overrides)
+                # and the review screen shows it from the source video; only the preview
+                # file is refreshed here, in the background, without changing the status.
+                if job.get("rendering"):
+                    tasks.put((jid, task))  # one render per video at a time
+                    time.sleep(1)
+                    continue
+                segs = read_json(jdir / "segments.json")
+                rev = job["rev"]
+                job["rendering"] = {"progress": 0.0}
+
+                def rprogress(p, job=job):
+                    job["rendering"] = {"progress": round(float(p), 4)}
+
+                t0 = time.time()
+                out = jdir / f"child_r{rev}.mp4"
+                try:
+                    info = work.run(work.render_task, (job["src"], str(out), segs, int(settings["out_height"])),
+                                    rprogress, cancel.is_set)
+                finally:
+                    job["rendering"] = None
+                for old in jdir.glob("child*.mp4"):
+                    if old != out:
+                        try:
+                            old.unlink()
+                        except OSError:
+                            pass
+                with lock:
+                    job["took"]["render"] = round(time.time() - t0, 1)
+                    job.update(output=str(out), render=info, output_rev=rev)
+                    save_job(job)
         except Cancelled:
             pass
         except Exception as e:  # keep the worker alive; show the failure on the job
@@ -385,7 +417,7 @@ def worker():
 def public(job: dict) -> dict:
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "participants", "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported", "notice", "cached", "attempt")
+            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     return out
@@ -523,11 +555,21 @@ async def set_overrides(jid: str, request: Request):
         else:
             item["box"] = None
         clean.append(item)
+    jdir = JOBDIR / jid
+    analysis = await asyncio.to_thread(read_json, jdir / "analysis.json")
+    segs = timeline.build(analysis, job["child_pid"], clean,
+                          timeline.experimenter_ids(job["participants"], settings["experimenters"]))
     with lock:
         job["overrides"] = clean
-        enqueue(job, "render")
+        job["rev"] += 1
+        job["summary"] = timeline.summarize(segs)
+        job["reviewed"] = False
+        (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
+        tasks.put((jid, "rerender"))  # the preview file follows in the background
         save_job(job)
-    return public(job)
+    out = public(job)
+    out["segments"] = segs
+    return out
 
 
 @app.post("/api/jobs/{jid}/reviewed")
@@ -588,6 +630,10 @@ async def export(request: Request):
                   and jobs[i].get("output") and Path(jobs[i]["output"]).exists()]
     if not chosen:
         raise HTTPException(400, "None of the selected videos has a finished result to export.")
+    behind = [j["name"] for j in chosen if j.get("rendering") or j.get("output_rev", j["rev"]) != j["rev"]]
+    if behind:
+        raise HTTPException(409, "The preview file is still being re-exported after a manual fix for: "
+                                 f"{', '.join(behind[:4])}{'…' if len(behind) > 4 else ''}. Try again in a minute.")
     if not any(want.get(k) for k in ("video", "segments", "report", "summary")):
         raise HTTPException(400, "Tick at least one kind of file to save.")
 
@@ -718,6 +764,52 @@ def thumb(jid: str, name: str):
 @app.get("/api/jobs/{jid}/source")
 def source(jid: str):
     return FileResponse(get_job(jid)["src"])
+
+
+@app.get("/api/jobs/{jid}/tiles")
+def tiles(jid: str):
+    """Every video tile found at every analysed moment, for the page's snap-to-tile:
+    [[t, [[x0, y0, x1, y1, pid], ...]], ...]."""
+    get_job(jid)
+    f = JOBDIR / jid / "analysis.json"
+    if not f.exists():
+        raise HTTPException(409, "analysis not finished")
+    a = read_json(f)
+    return [[s["t"], [[*t["box"], t["pid"]] for t in s["tiles"]]] for s in a["samples"]]
+
+
+STRIP_N, STRIP_W = 60, 160
+
+
+def make_strip(src: str, dst: Path):
+    """One row of evenly spaced thumbnails of the video (for the range picker)."""
+    import av
+    import cv2
+    cells = []
+    with av.open(src) as c:
+        v = c.streams.video[0]
+        dur = float(v.duration * v.time_base) if v.duration else (c.duration or 0) / 1e6
+        h = max(1, round(STRIP_W * v.height / v.width))
+        for i in range(STRIP_N):
+            t = (i + 0.5) * dur / STRIP_N
+            c.seek(int(t / v.time_base), stream=v)
+            frame = next(c.decode(v), None)
+            if frame is None:
+                break
+            cells.append(cv2.resize(frame.to_ndarray(format="bgr24"), (STRIP_W, h), interpolation=cv2.INTER_AREA))
+    if cells:
+        cv2.imwrite(str(dst), cv2.hconcat(cells), [cv2.IMWRITE_JPEG_QUALITY, 70])
+
+
+@app.get("/api/jobs/{jid}/strip")
+async def strip(jid: str):
+    job = get_job(jid)
+    f = JOBDIR / jid / "strip.jpg"
+    if not f.exists():
+        await asyncio.to_thread(make_strip, job["src"], f)
+    if not f.exists():
+        raise HTTPException(404)
+    return FileResponse(f)
 
 
 @app.get("/api/jobs/{jid}/output")

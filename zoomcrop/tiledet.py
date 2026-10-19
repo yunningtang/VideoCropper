@@ -100,11 +100,23 @@ def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
     straddling two neighbouring tiles, or a piece of one, and is dropped."""
     out = []
     used = set()
+
+    def twin_of(g: Tile, tl: Tile) -> bool:
+        """Same tile measured twice: same size, and not displaced by more than a fifth
+        of it. A geometric box of another size is a piece of the tile or a box grown
+        into the slide; one of the same size shifted further is the finder's guess of a
+        tile running off-screen, both phantoms."""
+        if abs(g.w - tl.w) > 0.12 * tl.w or abs(g.h - tl.h) > 0.12 * tl.h:
+            return False
+        dx = abs((g.x0 + g.x1) - (tl.x0 + tl.x1)) / 2
+        dy = abs((g.y0 + g.y1) - (tl.y0 + tl.y1)) / 2
+        return dx <= 0.12 * tl.w and dy <= 0.12 * tl.h
+
     for tl in learned:
         # the model's box can be off by a sidebar's width (icons next to the tile get
-        # included); a geometric box covering more than half of it is the same tile,
-        # measured on its real edges
-        twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6),
+        # included); a geometric box that is the same tile measured on its real edges
+        # replaces it
+        twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6 and twin_of(g, tl)),
                    key=lambda g: iou(g.box, tl.box), default=None)
         if twin is not None:
             out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut))
