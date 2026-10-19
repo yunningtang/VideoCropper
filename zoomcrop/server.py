@@ -58,6 +58,21 @@ sys.stdout.buffer.write(path.encode("utf-8"))
 
 app = FastAPI(title="Zoom child crop")
 lock = threading.RLock()
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    """A bug in a request handler: keep the traceback (workspace/server.errors.log) and
+    tell the page what went wrong instead of a bare 500."""
+    from fastapi.responses import JSONResponse
+    try:
+        WORK.mkdir(parents=True, exist_ok=True)
+        with open(WORK / "server.errors.log", "a", encoding="utf-8") as f:
+            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {request.method} {request.url.path}\n"
+                    f"{''.join(traceback.format_exception(exc))}\n")
+    except OSError:
+        pass
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 jobs: dict[str, dict] = {}
 cancels: dict[str, threading.Event] = {}
 tasks: queue.Queue = queue.Queue()
@@ -336,11 +351,19 @@ def worker():
                 set_status(job, "rendering", progress=0.0, error="", started=time.time())
                 t0 = time.time()
                 # The result stays in the workspace for review; nothing is written
-                # anywhere else until the user exports it.
-                out = jdir / "child.mp4"
+                # anywhere else until the user exports it. Each render gets its own file
+                # name: the previous one may still be open in the browser's player, and
+                # Windows will not let an open file be replaced.
+                out = jdir / f"child_r{job['rev'] + 1}.mp4"
                 info = work.run(work.render_task, (job["src"], str(out), segs, int(settings["out_height"])),
                                 progress, cancel.is_set)
                 job["took"]["render"] = round(time.time() - t0, 1)
+                for old in jdir.glob("child*.mp4"):
+                    if old != out:
+                        try:
+                            old.unlink()
+                        except OSError:
+                            pass  # still being played; removed with the job, or by the next render
                 (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
                 set_status(job, "done", progress=1.0, summary=timeline.summarize(segs), output=str(out),
                            render=info, rev=job["rev"] + 1, reviewed=False)
@@ -663,7 +686,14 @@ def delete_job(jid: str):
         job_faces.pop(jid, None)
     # Working files only: the analysis cache, the preview render and, for uploads, our
     # own copy. Source videos added by path and anything already exported are left alone.
-    shutil.rmtree(JOBDIR / jid, ignore_errors=True)
+    # job.json goes first, so that a folder whose video is still open in the player
+    # cannot come back as a job at the next start.
+    (JOBDIR / jid / "job.json").unlink(missing_ok=True)
+    for _ in range(10):
+        shutil.rmtree(JOBDIR / jid, ignore_errors=True)
+        if not (JOBDIR / jid).exists():
+            break
+        time.sleep(0.3)
     if job["origin"] == "upload":
         src = Path(job["src"])
         if src.parent == UPLOADS:

@@ -28,12 +28,7 @@ def note(msg: str):
 
 
 def parent_name() -> str:
-    try:
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {os.getppid()}", "/FO", "CSV", "/NH"],
-                             capture_output=True, text=True, timeout=5).stdout
-        return out.strip().split(",")[0].strip('"') or "?"
-    except Exception:
-        return "?"
+    return f"parent pid {os.getppid()}"
 
 
 def watch_console():

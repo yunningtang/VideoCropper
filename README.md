@@ -6,6 +6,13 @@ Cuts one participant's video tile (the child's) out of a Zoom screen recording a
 it as a fixed-size video. The tile is followed as it is resized, dragged around, or
 pushed partly off-screen. Everything runs on your own machine.
 
+## Install
+
+1. Install Python 3.12 from <https://www.python.org/downloads/> (tick "Add python.exe to PATH").
+2. Unzip this folder anywhere. The first `start.bat` creates a private Python environment
+   in `.venv` and installs the packages from `requirements.txt` (a few minutes, about
+   600 MB of downloads). Nothing else is needed: the models are in `zoomcrop/models`.
+
 ## Start
 
 Double-click `start.bat`; the browser opens <http://127.0.0.1:8756>. Close the console

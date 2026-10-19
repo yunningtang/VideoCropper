@@ -5,6 +5,12 @@
 从 Zoom 屏幕录像里自动裁出某一位参与者（孩子）的视频小窗，输出一个尺寸固定的视频。
 窗口被放大、缩小、拖动、部分拖出屏幕都会跟着走。全部在本机处理。
 
+## 安装
+
+1. 装 Python 3.12（<https://www.python.org/downloads/>，安装时勾选 "Add python.exe to PATH"）。
+2. 把文件夹解压到任意位置。第一次运行 `start.bat` 会自动在 `.venv` 里建好 Python 环境并安装
+   `requirements.txt` 里的包（几分钟，下载约 600 MB）。模型文件已在 `zoomcrop/models` 里，不用另外下载。
+
 ## 启动
 
 双击 `start.bat`，浏览器会打开 <http://127.0.0.1:8756>。关掉那个黑色窗口就是退出。
