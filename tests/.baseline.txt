@@ -1,19 +1,16 @@
   MISS geometric P259 t=9 [996, 5, 1226, 137] best 0.77
-  MISS merged P259 t=9 [996, 5, 1226, 137] best 0.77
   MISS geometric P124 t=290 [1584, 0, 1920, 189] best 0.59
   MISS geometric P124 t=360 [1584, 0, 1920, 189] best 0.51
   MISS geometric P273 t=30 [1198, 232, 1435, 367] best 0.59
-detect (geometric): 103/107 boxes found, 116 ms/frame mean, 417 max
-detect (merged): 106/107 boxes found, 289 ms/frame mean, 645 max
-P259: 2 people; child='Person A' right 14/15 visible 99.7%, contaminated 0/6; experimenter found 6/6 as 'Person B'; auto-pick None ''; took 748.1s, {'ocr_calls': 2361, 'full_detections': 2016, 'samples': 2114, 'tracks': 1550, 'rescued_tiles': 49}
-  child wrong at t=22.5: truth [998, 5, 1226, 137], got [880, 6, 1112, 136]
-  with experimenter known: right 14/15 visible 100.0%, contaminated 0/6, to check 8 spans 1.33s; inferred 1.1s, held 0.0s; auto-pick {'pid': 0, 'notice': ''}
-    child wrong at t=22.5: truth [998, 5, 1226, 137], got [880, 6, 1112, 136]
-P124: 2 people; child='Person A' right 18/18 visible 100.0%, contaminated 0/17; experimenter found 17/17 as 'Person B'; auto-pick None ''; took 366.1s, {'ocr_calls': 647, 'full_detections': 747, 'samples': 830, 'tracks': 477, 'rescued_tiles': 5}
-  with experimenter known: right 18/18 visible 100.0%, contaminated 0/17, to check 0 spans 0s; inferred 16.0s, held 0.0s; auto-pick {'pid': 0, 'notice': ''}
-P273: 2 people; child='Person B' right 15/15 visible 100.0%, contaminated 0/15; experimenter found 15/15 as 'Person A'; auto-pick None ''; took 255.6s, {'ocr_calls': 456, 'full_detections': 555, 'samples': 582, 'tracks': 308, 'rescued_tiles': 2}
+detect (geometric): 103/107 boxes found, 68 ms/frame mean, 247 max
+detect (merged): 107/107 boxes found, 121 ms/frame mean, 322 max
+P259: 2 people; child='Person A' right 15/15 visible 99.8%, contaminated 0/6; experimenter found 6/6 as 'Person B'; auto-pick None ''; took 327.4s, {'ocr_calls': 1187, 'full_detections': 1480, 'learned_detections': 1480, 'samples': 1588, 'tracks': 1005, 'rescued_tiles': 75}
+  with experimenter known: right 15/15 visible 100.0%, contaminated 0/6, to check 13 spans 4.2s; inferred 0.6s, held 0.0s; auto-pick {'pid': 0, 'notice': ''}
+P124: 2 people; child='Person B' right 18/18 visible 100.0%, contaminated 0/17; experimenter found 17/17 as 'Person A'; auto-pick None ''; took 177.7s, {'ocr_calls': 238, 'full_detections': 701, 'learned_detections': 701, 'samples': 783, 'tracks': 160, 'rescued_tiles': 1}
+  with experimenter known: right 18/18 visible 100.0%, contaminated 0/17, to check 0 spans 0s; inferred 1.0s, held 0.0s; auto-pick {'pid': 1, 'notice': ''}
+P273: 2 people; child='Person B' right 15/15 visible 100.0%, contaminated 0/15; experimenter found 15/15 as 'Person A'; auto-pick None ''; took 133.0s, {'ocr_calls': 251, 'full_detections': 491, 'learned_detections': 491, 'samples': 522, 'tracks': 179, 'rescued_tiles': 7}
   with experimenter known: right 15/15 visible 100.0%, contaminated 0/15, to check 0 spans 0s; inferred 0.0s, held 0.0s; auto-pick {'pid': 1, 'notice': ''}
-P224: 2 people; child='Adele' right 13/13 visible 100.0%, contaminated 0/4; experimenter found 4/4 as 'Dolly'; auto-pick 0 ''; took 424.3s, {'ocr_calls': 1550, 'full_detections': 1237, 'samples': 1527, 'tracks': 927, 'rescued_tiles': 0}
+P224: 2 people; child='Adele' right 13/13 visible 100.0%, contaminated 0/4; experimenter found 4/4 as 'Dolly'; auto-pick 0 ''; took 313.9s, {'ocr_calls': 1189, 'full_detections': 1142, 'learned_detections': 1142, 'samples': 1502, 'tracks': 629, 'rescued_tiles': 0}
   with experimenter known: right 13/13 visible 100.0%, contaminated 0/4, to check 0 spans 0s; inferred 0.0s, held 0.0s; auto-pick {'pid': 0, 'notice': ''}
-child timeline: 60/61 moments right, 0 contaminated by the experimenter
+child timeline: 61/61 moments right, 0 contaminated by the experimenter
 exit 0

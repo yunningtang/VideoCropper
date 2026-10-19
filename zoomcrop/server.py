@@ -106,10 +106,15 @@ def load_state():
         jobs[job["id"]] = job
         cancels[job["id"]] = threading.Event()
         # resume whatever was interrupted by the last shutdown
+        job["rendering"] = None
+        job["rerender_queued"] = False
         if job["status"] in ("queued", "analyzing"):
             enqueue(job, "analyze")
         elif job["status"] == "rendering":
             enqueue(job, "render")
+        elif job["status"] == "done" and job.get("output_rev", job["rev"]) != job["rev"]:
+            job["rerender_queued"] = True  # a fix was saved but its preview file never got made
+            tasks.put((job["id"], "rerender"))
 
 
 def save_job(job: dict):
@@ -375,6 +380,7 @@ def worker():
                     tasks.put((jid, task))  # one render per video at a time
                     time.sleep(1)
                     continue
+                job["rerender_queued"] = False
                 segs = read_json(jdir / "segments.json")
                 rev = job["rev"]
                 job["rendering"] = {"progress": 0.0}
@@ -398,6 +404,9 @@ def worker():
                 with lock:
                     job["took"]["render"] = round(time.time() - t0, 1)
                     job.update(output=str(out), render=info, output_rev=rev)
+                    if job["rev"] != rev and not job.get("rerender_queued"):  # fixed again meanwhile
+                        job["rerender_queued"] = True
+                        tasks.put((jid, "rerender"))
                     save_job(job)
         except Cancelled:
             pass
@@ -565,7 +574,9 @@ async def set_overrides(jid: str, request: Request):
         job["summary"] = timeline.summarize(segs)
         job["reviewed"] = False
         (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
-        tasks.put((jid, "rerender"))  # the preview file follows in the background
+        if not job.get("rerender_queued"):  # fixes arrive every few seconds; one render follows them
+            job["rerender_queued"] = True
+            tasks.put((jid, "rerender"))
         save_job(job)
     out = public(job)
     out["segments"] = segs
