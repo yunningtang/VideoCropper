@@ -590,6 +590,11 @@ async def set_reviewed(jid: str, request: Request):
     with lock:
         job["reviewed"] = bool(body.get("reviewed"))
         save_job(job)
+    if job["reviewed"]:  # the playback copy is only needed while the video is being reviewed
+        try:
+            (JOBDIR / jid / "source.mp4").unlink(missing_ok=True)
+        except OSError:
+            pass
     return public(job)
 
 
@@ -772,9 +777,47 @@ def thumb(jid: str, name: str):
     return FileResponse(f)
 
 
+def make_proxy(src: str, dst: Path):
+    """The same video and audio streams in a new MP4 with the index (moov) first.
+    Zoom writes the index at the end, so a browser has to reach the end of the file
+    before it can play or seek, which shows as a black player on long recordings.
+    Streams are copied, not re-encoded: a few seconds even for a large file."""
+    import av
+    tmp = dst.with_name(dst.stem + ".part.mp4")
+    with av.open(src) as inp, av.open(str(tmp), "w", options={"movflags": "faststart"}) as out:
+        streams = [s for s in inp.streams if s.type in ("video", "audio")]
+        omap = {s.index: out.add_stream_from_template(s) for s in streams}
+        for pkt in inp.demux(streams):
+            if pkt.dts is None:
+                continue
+            pkt.stream = omap[pkt.stream.index]
+            out.mux(pkt)
+    os.replace(tmp, dst)
+
+
+proxy_locks: dict[str, threading.Lock] = {}
+
+
 @app.get("/api/jobs/{jid}/source")
-def source(jid: str):
-    return FileResponse(get_job(jid)["src"])
+async def source(jid: str):
+    """The recording for the review screen: a browser-friendly copy made on first use
+    (and removed again when the video is marked as reviewed), the original if the
+    copy cannot be made."""
+    job = get_job(jid)
+    p = JOBDIR / jid / "source.mp4"
+    if not p.exists():
+        lk = proxy_locks.setdefault(jid, threading.Lock())
+
+        def build():
+            with lk:
+                if not p.exists():
+                    try:
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        make_proxy(job["src"], p)
+                    except Exception:
+                        pass
+        await asyncio.to_thread(build)
+    return FileResponse(p if p.exists() else job["src"])
 
 
 @app.get("/api/jobs/{jid}/tiles")
