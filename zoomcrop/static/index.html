@@ -234,7 +234,7 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
 .pane h3 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .pane.flow { background: var(--panel2); }
 .steps.flowsteps, .pane.flow .steps { display: flex; gap: 0; margin: 0 0 4px; padding: 0; list-style: none; }
-.pane.flow .steps li { flex: 1; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--dim); margin: 0; }
+.pane.flow .steps li { flex: 1; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--dim); margin: 0; white-space: nowrap; min-width: 0; overflow: hidden; }
 .pane.flow .steps li i { width: 15px; height: 15px; border: 1px solid var(--line2); display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-style: normal; flex: none; }
 .pane.flow .steps li.done { color: var(--muted); } .pane.flow .steps li.done i { border-color: var(--ok-fill); color: var(--ok); }
 .pane.flow .steps li.now { color: var(--text); font-weight: 600; } .pane.flow .steps li.now i { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
