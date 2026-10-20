@@ -82,7 +82,7 @@ main:focus { outline: none; }
 .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .pathrow { display: flex; gap: 4px; margin: 0 8px 8px; }
 .pathrow input { flex: 1; font-size: 12px; }
-.filters { display: flex; gap: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.filters { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--line); overflow: hidden; }
 .filters button { border: 0; border-radius: 0; background: none; color: var(--muted); padding: 3px 9px; min-height: 24px; font-size: 11.5px; border-bottom: 2px solid transparent; white-space: nowrap; }
 .filters button[aria-pressed=true] { color: var(--text); border-bottom-color: var(--accent); background: none; }
 .overall { padding: 3px 10px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); min-height: 20px; }
@@ -365,9 +365,9 @@ const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "miss
 const isBusy = j => j.status === "analyzing" || j.status === "rendering";
 const GROUPS = {
   all: ["All", () => true],
-  todo: ["Needs action", j => j.status === "choose" || j.status === "error" || (j.status === "done" && (j.summary?.visible_pct ?? 100) < 50)],
-  review: ["To review", j => j.status === "done" && !j.reviewed],
-  ok: ["Reviewed", j => j.status === "done" && j.reviewed],
+  todo: ["Action", j => j.status === "choose" || j.status === "error" || (j.status === "done" && (j.summary?.visible_pct ?? 100) < 50)],
+  review: ["Review", j => j.status === "done" && !j.reviewed],
+  ok: ["Confirmed", j => j.status === "done" && j.reviewed],
   out: ["Exported", j => j.status === "done" && exportState(j) === "current"],
 };
 // exported and still current / exported but changed since / never exported
