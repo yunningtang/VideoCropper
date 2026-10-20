@@ -48,9 +48,26 @@ def _die_with_parent(ppid: int):
     threading.Thread(target=watch, daemon=True).start()
 
 
+def _background_priority():
+    """Analyses saturate every core; run them below normal priority so that the page in
+    the browser (and whatever else the person is doing) stays responsive. Throughput is
+    the same when the machine is otherwise idle."""
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.SetPriorityClass(k32.GetCurrentProcess(), 0x00004000)  # BELOW_NORMAL_PRIORITY_CLASS
+    except Exception:
+        try:
+            import os
+            os.nice(5)
+        except Exception:
+            pass
+
+
 # -- child-side targets (module level, so that "spawn" can import them) ----------------
 def analyze_task(src: str, jdir: str, known_faces: list, ppid: int, q):
     _die_with_parent(ppid)
+    _background_priority()
     try:
         from .analyze import Analyzer
         an = Analyzer(known_faces=known_faces)
@@ -63,6 +80,7 @@ def analyze_task(src: str, jdir: str, known_faces: list, ppid: int, q):
 
 def render_task(src: str, dst: str, segments: list, out_h: int, ppid: int, q):
     _die_with_parent(ppid)
+    _background_priority()
     try:
         from .render import render
         info = render(src, dst, segments, out_h=out_h, progress=lambda p: q.put(("progress", float(p))))

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
 import cv2
 import numpy as np
 
@@ -24,7 +25,9 @@ PHANTOM_IOU = 0.25  # ... overlapping less than TWIN_IOU but at least this much 
 
 
 class TileDetector:
-    def __init__(self, path: Path = MODEL_FILE, threads: int = 8):
+    def __init__(self, path: Path = MODEL_FILE, threads: int | None = None):
+        if threads is None:  # four analyses run at once: share the cores instead of oversubscribing them
+            threads = max(2, min(8, (os.cpu_count() or 8) // 4))
         import onnxruntime as ort
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads
