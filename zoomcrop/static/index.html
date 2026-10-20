@@ -8,19 +8,19 @@
 /* Semantic colour tokens. Text colours are checked for 4.5:1 on their backgrounds;
    the *-fill colours are for shapes (timeline blocks, bars), which need 3:1. */
 :root {
-  --bg: #141416; --panel: #1f1f23; --line: #303036; --text: #e9e9ec; --muted: #9a9aa3;
-  --accent: #3dd9c3; --on-accent: #0b1f1c; --accent-soft: #163b36;
+  --bg: #141518; --panel: #202226; --line: #34363C; --text: #F1F2F4; --muted: #9699A3;
+  --accent: #38D5C2; --on-accent: #0b1f1c; --accent-soft: #173a36;
   --ok: #63d3a2; --warn: #f0b65a; --bad: #f58f8a; --manual: #b6a3f5;
   --ok-soft: #173326; --warn-soft: #3a2c10; --bad-soft: #3d1c1b;
   --ok-fill: #46b985; --warn-fill: #e3a341; --bad-fill: #ea6b6b; --bad-fill2: #7d2f2f; --manual-fill: #a48cf0;
-  --shadow: none;
+  --shadow: none; --radius: 7px;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font: 14px/1.5 Inter, Geist, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-variant-numeric: tabular-nums;
   display: grid; grid-template-rows: 1fr; overflow: hidden;
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -31,7 +31,7 @@ button, input, select, .btn { font: inherit; color: inherit; }
 button, .btn {
   border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 5px 12px; cursor: pointer;
   min-height: 30px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  transition: border-color .15s, background-color .15s;
+  transition: border-color .12s, background-color .12s;
 }
 button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
 button:active:not(:disabled) { background: var(--accent-soft); }
@@ -292,6 +292,30 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 .ed-side .cards { grid-template-columns: 1fr 1fr; max-height: none; }
 .ed-side .keys { margin: 0 4px; font-size: 12px; }
 .ed-side .keys kbd { margin-right: 2px; }
+
+/* precision-workspace layout: left column (viewers, bar, timeline), inspector on the right */
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto auto 1fr; gap: 10px 12px; align-items: start; }
+.editor > .titlebar, .editor > .notice { grid-column: 1 / -1; margin-bottom: 0; }
+.ed-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; grid-column: 1; grid-row: 2 / 4; }
+.ed-side { grid-column: 2; grid-row: 2 / 4; max-height: none; position: sticky; top: 0; }
+@container (max-width: 1100px) { .editor { grid-template-columns: 1fr; } .ed-left, .ed-side { grid-column: auto; grid-row: auto; } .ed-side { position: static; } }
+.ed-tlrow { display: grid; grid-template-columns: 64px minmax(0, 1fr); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.gutter { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: #1b1c20; }
+.gutter i { display: flex; align-items: center; padding-left: 10px; font: 10.5px/1 Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); font-style: normal; }
+.gutter .g-ruler { height: 22px; } .gutter .g-video { height: 48px; } .gutter .g-track { height: 30px; } .gutter .g-fix { height: 24px; } .gutter .g-rev { height: 18px; border-bottom: 0; }
+.ed-tl { border: 0; border-radius: 0; }
+.track.review { height: 18px; background: #121214; border-bottom: 0; }
+.track.review .rseg { position: absolute; top: 4px; bottom: 4px; min-width: 2px; border-radius: 2px; background: var(--warn-fill); }
+.track.review .rseg.miss { background: repeating-linear-gradient(45deg, var(--bad-fill) 0 3px, var(--bad-fill2) 3px 6px); }
+.pane.flow { padding: 10px 14px; }
+.steps { display: flex; gap: 0; margin: 0 0 6px; padding: 0; list-style: none; }
+.steps li { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); position: relative; padding-right: 6px; }
+.steps li i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-style: normal; flex: none; }
+.steps li.done { color: var(--text); } .steps li.done i { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.steps li.now { color: var(--text); font-weight: 600; } .steps li.now i { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 13px; }
+.kv > div { display: contents; } .kv dt { color: var(--muted); } .kv dd { margin: 0; color: var(--text); } .kv dd.attn { color: var(--warn); }
+.ed-side .cards { grid-template-columns: 1fr 1fr; }
 </style>
 </head>
 <body>
@@ -618,72 +642,79 @@ async function showReview(j) {
   const V = d.video, total = V.duration;
   const keepT = R && R.jobId === j.id ? R.cur() : lastPos.id === j.id ? lastPos.t : 0;  // position survives a rebuild
   $("#main").innerHTML = `<div class="editor">
-    ${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
-      <button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
+    ${head(j, `<button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
     ${d.notice_text ? `<p class="notice" role="status">${esc(d.notice_text)} If it is not, click Change person.</p>` : ""}
     <video id="vthumb" muted preload="auto" src="/api/jobs/${j.id}/source" hidden aria-hidden="true"></video>
-    <div class="ed-viewers">
-      <div class="viewer"><div class="vlabel"><span>Original</span><span class="vhint">drag the red box or a corner · click a dotted tile to take it</span></div>
-        <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
-          <video id="vsrc" playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
-          <canvas id="tilelayer"></canvas>
-          <div id="box"><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
-          <div id="drawrect"></div><div id="drawlayer"></div><div class="loading" id="loading">Preparing playback…</div></div></div>
-      <div class="viewer"><div class="vlabel"><span>Crop</span><span class="vhint" id="saveNote"></span></div>
-        <div class="stage" style="aspect-ratio:16/9">
-          <canvas id="vout" width="640" height="360" aria-label="Cropped result"></canvas>
-          <div class="nochild" id="nochild">No child in this span</div></div></div>
-    </div>
-    <div class="ed-bar">
-      <button id="play" class="primary" title="Space">Play</button>
-      <button id="stepB" class="ghost" title="One frame back (,)">&#9664;|</button><button id="stepF" class="ghost" title="One frame forward (.)">|&#9654;</button>
-      <span class="time"><span id="cur">0:00.0</span> / ${fmt(total)}</span>
-      <select id="rate" title="Speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
-      <span class="sep"></span>
-      <button id="prevFlag" title="Previous span to check (P)">&#9664; Check</button><button id="nextFlag" title="Next span to check (N)">Check &#9654;</button>
-      <label class="tog"><input type="checkbox" id="only"> only spans to check</label>
-      <span class="sep"></span>
-      <button id="undo" class="ghost" title="Undo (Ctrl+Z)">Undo</button><button id="redo" class="ghost" title="Redo (Ctrl+Y)">Redo</button>
-      <span class="spacer"></span>
-      <span class="fact">Visible <b id="fVis"></b></span><span class="fact">To check <b id="fCheck"></b></span><span class="fact" id="rstate"></span>
-      <span class="fact">Exported <b class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
-        exportState(d) === "none" ? "no" : exportState(d) === "stale" ? "changed since" : "yes"}</b></span>
-      <label class="zoom" title="Timeline zoom (Ctrl + wheel over the timeline)">&#128269; <input type="range" id="zoom" min="1" max="24" step="0.5" value="1"></label>
-    </div>
-    <div class="ed-main">
-      <div class="ed-tl" id="tlwrap" tabindex="0" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
-        <div id="tlinner">
-          <div class="ruler" id="ruler"></div>
-          <div class="track strip" id="strip" title="Drag to mark a span; drag its edges to adjust" style="background-image:url(/api/jobs/${j.id}/strip)"><span class="tlabel">video</span><div id="range2"><i class="rh l"></i><i class="rh r"></i></div></div>
-          <div class="track crop" id="tl" title="Click or drag to move the playhead"><span class="tlabel">crop</span><div id="segs"></div></div>
-          <div class="track fixes" id="fixtrack"><span class="tlabel">fixes</span></div>
-          <div id="range"></div><div id="head"><i></i></div>
+    <div class="ed-left">
+      <div class="ed-viewers">
+        <div class="viewer"><div class="vlabel"><span>Original</span><span class="vhint">drag the red box or a corner · click a dotted tile to take it</span></div>
+          <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
+            <video id="vsrc" playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
+            <canvas id="tilelayer"></canvas>
+            <div id="box"><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+            <div id="drawrect"></div><div id="drawlayer"></div><div class="loading" id="loading">Preparing playback…</div></div></div>
+        <div class="viewer"><div class="vlabel"><span>Crop · ${esc(d.child_name || "manual area")}</span><span class="vhint" id="saveNote"></span></div>
+          <div class="stage" style="aspect-ratio:16/9">
+            <canvas id="vout" width="640" height="360" aria-label="Cropped result"></canvas>
+            <div class="nochild" id="nochild">No child in this span</div></div></div>
+      </div>
+      <div class="ed-bar">
+        <button id="play" class="primary" title="Space">Play</button>
+        <button id="stepB" class="ghost" title="One frame back (,)">&#9664;|</button><button id="stepF" class="ghost" title="One frame forward (.)">|&#9654;</button>
+        <span class="time"><span id="cur">0:00.0</span> / ${fmt(total)}</span>
+        <select id="rate" title="Speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+        <span class="sep"></span>
+        <button id="prevFlag" title="Previous span to check (P)">&#9664; Check</button><button id="nextFlag" title="Next span to check (N)">Check &#9654;</button>
+        <label class="tog"><input type="checkbox" id="only"> only spans to check</label>
+        <span class="sep"></span>
+        <button id="undo" class="ghost" title="Undo (Ctrl+Z)">Undo</button><button id="redo" class="ghost" title="Redo (Ctrl+Y)">Redo</button>
+        <span class="spacer"></span>
+        <label class="zoom" title="Timeline zoom (Ctrl + wheel, + / -)">zoom <input type="range" id="zoom" min="1" max="24" step="0.5" value="1"></label>
+      </div>
+      <div class="ed-tlrow">
+        <div class="gutter"><i class="g-ruler"></i><i class="g-video">video</i><i class="g-track">tracking</i><i class="g-fix">fixes</i><i class="g-rev">review</i></div>
+        <div class="ed-tl" id="tlwrap" tabindex="0" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
+          <div id="tlinner">
+            <div class="ruler" id="ruler"></div>
+            <div class="track strip" id="strip" title="Drag to mark a span; drag its edges to adjust" style="background-image:url(/api/jobs/${j.id}/strip)"><div id="range2"><i class="rh l"></i><i class="rh r"></i></div></div>
+            <div class="track crop" id="tl" title="Click or drag to move the playhead"><div id="segs"></div></div>
+            <div class="track fixes" id="fixtrack"></div>
+            <div class="track review" id="revtrack" title="Spans to check"></div>
+            <div id="range"></div><div id="head"><i></i></div>
+          </div>
         </div>
       </div>
-      <aside class="ed-side">
-        <section class="pane"><h3>Spans to check <span class="muted" id="checkN"></span></h3>
-          <p class="desc">Pause there, then click the right tile on the original or drag the red box; the fix covers the marked span and saves itself. OK means the crop is right.</p>
-          <div id="revlist"></div></section>
-        <section class="pane" id="fixcard"><h3>Fixes</h3>
-          <div class="quick">
-            <button id="qHold" title="Keep the box from just before the span">Keep previous box</button>
-            <button id="qNone" title="Black output for the span">No child here</button>
-            <button id="fDraw" title="Draw a fresh box on the original">Draw a box</button>
-            <button id="qClear" class="ghost" title="Clear the marked span (Esc)">Clear span</button></div>
-          <details id="moreFix"><summary>Type the times or the box</summary>
-            <div class="timegrid">
-              <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}"><output id="faOut"></output><button id="faNow">Playhead</button>
-              <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}"><output id="fbOut"></output><button id="fbNow">Playhead</button>
-            </div>
-            <div class="boxrow" id="boxrow">
-              <label for="bx">Left</label><input type="number" id="bx" step="2"><label for="by">Top</label><input type="number" id="by" step="2">
-              <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">px; height follows 16:9</span>
-              <button id="fAdd">Use this box for the span</button></div>
-            <p class="ferr" id="fErr" role="alert"></p></details>
-          <ul class="ovs" id="ovs"></ul></section>
-        <p class="keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> 1 s <kbd>,</kbd><kbd>.</kbd> frame <kbd>P</kbd><kbd>N</kbd> spans <kbd>I</kbd><kbd>O</kbd> mark span <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</p>
-      </aside>
-    </div></div>`;
+    </div>
+    <aside class="ed-side">
+      <section class="pane flow" id="flow"></section>
+      <section class="pane"><h3>Track</h3>
+        <dl class="kv"><div><dt>Person</dt><dd>${esc(d.child_name || "manual area")}</dd></div>
+          <div><dt>Visible</dt><dd id="fVis"></dd></div><div><dt>Moves</dt><dd>${(d.summary || {}).layout_changes ?? ""}</dd></div>
+          <div><dt>To check</dt><dd id="fCheck"></dd></div><div id="rstate"></div>
+          <div><dt>Exported</dt><dd class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
+            exportState(d) === "none" ? "not yet" : exportState(d) === "stale" ? "changed since" : "yes"}</dd></div></dl></section>
+      <section class="pane"><h3>Spans to check <span class="muted" id="checkN"></span></h3>
+        <p class="desc">Pause there, then click the right tile on the original or drag the red box; the fix covers the marked span and saves itself. OK means the crop is right.</p>
+        <div id="revlist"></div></section>
+      <section class="pane" id="fixcard"><h3>Fixes</h3>
+        <div class="quick">
+          <button id="qHold" title="Keep the box from just before the span">Keep previous box</button>
+          <button id="qNone" title="Black output for the span">No child here</button>
+          <button id="fDraw" title="Draw a fresh box on the original">Draw a box</button>
+          <button id="qClear" class="ghost" title="Clear the marked span (Esc)">Clear span</button></div>
+        <details id="moreFix"><summary>Type the times or the box</summary>
+          <div class="timegrid">
+            <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}"><output id="faOut"></output><button id="faNow">Playhead</button>
+            <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}"><output id="fbOut"></output><button id="fbNow">Playhead</button>
+          </div>
+          <div class="boxrow" id="boxrow">
+            <label for="bx">Left</label><input type="number" id="bx" step="2"><label for="by">Top</label><input type="number" id="by" step="2">
+            <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">px; height follows 16:9</span>
+            <button id="fAdd">Use this box for the span</button></div>
+          <p class="ferr" id="fErr" role="alert"></p></details>
+        <ul class="ovs" id="ovs"></ul></section>
+      <p class="keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> 1 s <kbd>,</kbd><kbd>.</kbd> frame <kbd>P</kbd><kbd>N</kbd> spans <kbd>I</kbd><kbd>O</kbd> mark span <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo <kbd>+</kbd><kbd>-</kbd> zoom</p>
+    </aside></div>`;
 
   const vsrc = $("#vsrc"), vout = $("#vout"), ctx = vout.getContext("2d"), box = $("#box"), tl = $("#tl"), stripEl = $("#strip");
   const tlayer = $("#tilelayer"), tctx = tlayer.getContext("2d"), tlwrap = $("#tlwrap"), tlinner = $("#tlinner");
@@ -763,6 +794,8 @@ async function showReview(j) {
     $("#fVis").textContent = `${sm.visible_pct}%`; $("#fVis").className = sm.visible_pct < 99 ? "attn" : "";
     $("#fCheck").textContent = reviews.length ? `${reviews.length} · ${secs.toFixed(1)} s` : "none"; $("#fCheck").className = reviews.length ? "attn" : "";
     $("#checkN").textContent = reviews.length ? `(${reviews.length})` : "";
+    $("#revtrack").innerHTML = reviews.map(r => `<div class="rseg ${r.c}" style="left:${r.start / total * 100}%;width:${Math.max(0.15, (r.end - r.start) / total * 100)}%"></div>`).join("");
+    drawFlow();
     $("#prevFlag").disabled = $("#nextFlag").disabled = $("#only").disabled = !reviews.length;
     for (const r of reviews) { const s = segs.find(s => s.start <= (r.start + r.end) / 2 && s.end > (r.start + r.end) / 2 && s.box) || segs.find(s => s.start >= r.start && s.start < r.end && s.box); r.box = s ? s.box : null; }
     $("#revlist").innerHTML = reviews.length ? `<div class="cards" id="reviews">${reviews.map((r, i) => `<div class="cardt ${r.c}" data-i="${i}">
@@ -774,8 +807,18 @@ async function showReview(j) {
     loadThumbs();
     drawFixTrack();
   }
+  // the workflow: needs review -> fixing -> confirmed -> exported, with the one action that moves it on
+  function drawFlow() {
+    const jj = S.jobs.find(x => x.id === j.id) || j, ex = exportState(jj);
+    const step = ex === "current" ? 3 : jj.reviewed ? 2 : (R.dirty || R.saving || R.overrides.some(o => o.fresh)) ? 1 : 0;
+    const names = ["Needs review", "Fixing", "Confirmed", "Exported"];
+    const hint = step === 0 ? (R.reviews.length ? `${R.reviews.length} span${R.reviews.length > 1 ? "s" : ""} to look at, then confirm.` : "Nothing flagged: scrub once, then confirm.")
+      : step === 1 ? "Fixes are saved as you go. Confirm when the crop is right." : step === 2 ? "Confirmed. Export when the batch is done." : "Exported and up to date.";
+    $("#flow").innerHTML = `<ol class="steps">${names.map((n, i) => `<li class="${i < step ? "done" : i === step ? "now" : ""}"><i>${i < step ? "✓" : i + 1}</i>${n}</li>`).join("")}</ol>
+      <p class="desc">${hint}</p>`;
+  }
   function drawFixTrack() {
-    $("#fixtrack").innerHTML = `<span class="tlabel">fixes</span>` + R.overrides.map((o, i) => `<div class="clip ${o.mode === "ok" ? "okc" : ""} ${o.fresh ? "fresh" : ""}" data-fx="${i}" style="left:${o.start / total * 100}%;width:${Math.max(0.2, (o.end - o.start) / total * 100)}%" title="${fmt(o.start)} – ${fmt(o.end)}: ${ovText(o)}"></div>`).join("");
+    $("#fixtrack").innerHTML = R.overrides.map((o, i) => `<div class="clip ${o.mode === "ok" ? "okc" : ""} ${o.fresh ? "fresh" : ""}" data-fx="${i}" style="left:${o.start / total * 100}%;width:${Math.max(0.2, (o.end - o.start) / total * 100)}%" title="${fmt(o.start)} – ${fmt(o.end)}: ${ovText(o)}"></div>`).join("");
   }
   $("#fixtrack").addEventListener("click", e => { const c = e.target.closest("[data-fx]"); if (!c) return; const o = R.overrides[+c.dataset.fx]; vsrc.pause(); seek(o.start + 0.05); setRange(o.start, o.end); });
   // thumbnails are cut from a second, hidden copy of the video so that playback is not disturbed
@@ -817,12 +860,12 @@ async function showReview(j) {
 
   // reviewed mark: tracks progress through a batch
   const mark = $("#mark");
-  const drawMark = () => { mark.textContent = j.reviewed ? "Mark as not reviewed" : "Reviewed, next video"; mark.className = j.reviewed ? "" : "primary"; };
+  const drawMark = () => { mark.textContent = j.reviewed ? "Unconfirm" : "Confirm, next video"; mark.className = j.reviewed ? "" : "primary"; };
   drawMark();
   mark.onclick = () => busy(mark, async () => {
     if (!j.reviewed && R.dirty) await saveNow();
     const to = !j.reviewed;
-    await api(`/api/jobs/${j.id}/reviewed`, {json: {reviewed: to}}); j.reviewed = to; drawMark(); renderList();
+    await api(`/api/jobs/${j.id}/reviewed`, {json: {reviewed: to}}); j.reviewed = to; drawMark(); drawFlow(); renderList();
     if (!to) return;
     const i = S.jobs.findIndex(x => x.id === j.id);
     const next = [...S.jobs.slice(i + 1), ...S.jobs.slice(0, i)].find(x => x.status === "done" && !x.reviewed);
@@ -855,10 +898,11 @@ async function showReview(j) {
     if (R.n++ % 30 === 0) {
       tlwrap.setAttribute("aria-valuenow", t.toFixed(1)); tlwrap.setAttribute("aria-valuetext", fmt(t));
       const jj = S.jobs.find(x => x.id === j.id), rs = $("#rstate");
-      if (rs) rs.innerHTML = jj?.rendering ? `Preview file <b class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</b>`
-        : jj?.render_error ? `Preview file <b class="attn" title="${esc(jj.render_error)}">re-export failed (hover)</b>`
-        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `Preview file <b class="attn">waiting to re-export</b>`
-        : jj?.render?.audio === "dropped" ? `Audio <b class="attn">could not be kept</b>` : "";
+      if (rs) rs.innerHTML = jj?.rendering ? `<dt>Preview file</dt><dd class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</dd>`
+        : jj?.render_error ? `<dt>Preview file</dt><dd class="attn" title="${esc(jj.render_error)}">re-export failed (hover)</dd>`
+        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `<dt>Preview file</dt><dd class="attn">waiting to re-export</dd>`
+        : jj?.render?.audio === "dropped" ? `<dt>Audio</dt><dd class="attn">could not be kept</dd>` : "";
+      if (jj && (jj.exported?.rev !== (R.flowRev ?? null))) { R.flowRev = jj.exported?.rev ?? null; drawFlow(); }
     }
     const e = R.boxDrag ? {box: R.boxDrag.box, manual: true} : effAt(t);
     if (!R.boxDrag) placeBox(e.box, e.manual);
@@ -1046,6 +1090,7 @@ async function showReview(j) {
     S.shown = `${j.id}|done|${r.rev}|false`;  // the poll must not rebuild the screen
     renderMarks(); drawOvs();
     $("#saveNote").textContent = R.dirty ? "unsaved" : "saved";
+    drawFlow();
     if (R.dirty) scheduleSave();
   }
   R.saveNow = saveNow;
