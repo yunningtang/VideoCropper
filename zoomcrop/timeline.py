@@ -15,6 +15,7 @@ from .analyze import names_match
 from .detect import iou
 
 GROUP_TOL = 5      # px at 1080p: box jitter below this is the same layout
+SAME_IOU = 0.85    # ... or boxes overlapping this much: two measurements of one window (loose model box, snapped edges)
 FILL_SAME = 1.5    # s: bridge a detection gap this short when the box is unchanged across it
 FILL_ANY = 0.6     # s: bridge a gap this short even if the box changed (avoids black flashes)
 MIN_AUTO_SHARE = 0.2  # a person must be on screen this much of the video to be cropped without asking
@@ -194,7 +195,7 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
                 same = last["box"] is None
             elif last["box"] is not None:
                 ref = np.median(np.array(cur_boxes), axis=0)
-                same = bool(np.abs(ref - np.array(box)).max() <= tol)
+                same = bool(np.abs(ref - np.array(box)).max() <= tol) or iou([float(v) for v in ref], box) >= SAME_IOU
             # a moment the pipeline was unsure about must not stretch over the whole
             # span of the same box: cut the segment where the review marks change
             if same and (flags & SPLIT_FLAGS) != (last["flags"] & SPLIT_FLAGS):
@@ -226,7 +227,7 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
         prev = segs[i - 1]
         nxt = segs[i + 1] if i + 1 < len(segs) else None
         same_after = nxt is not None and nxt["box"] is not None and \
-            max(abs(a - b) for a, b in zip(prev["box"], nxt["box"])) <= 2 * tol
+            (max(abs(a - b) for a, b in zip(prev["box"], nxt["box"])) <= 2 * tol or iou(prev["box"], nxt["box"]) >= SAME_IOU)
         if same_after and gap <= FILL_SAME:
             # the window was there before and after, at the same place: the detector
             # blinked, the output is continuous, nothing to look at
@@ -267,7 +268,8 @@ def _settle(segs, tol):
             continue
         j = i + 1
         while j < len(segs) and segs[j]["box"] is not None and \
-                max(abs(p - q) for p, q in zip(segs[j - 1]["box"], segs[j]["box"])) <= tol:
+                (max(abs(p - q) for p, q in zip(segs[j - 1]["box"], segs[j]["box"])) <= tol
+                 or iou(segs[i]["box"], segs[j]["box"]) >= SAME_IOU):  # anchored to the run's start: no drifting chains
             j += 1
         run = segs[i:j]
         box = list(max(run, key=lambda s: s["end"] - s["start"])["box"])
