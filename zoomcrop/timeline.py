@@ -20,13 +20,15 @@ FILL_SAME = 1.5    # s: bridge a detection gap this short when the box is unchan
 FILL_ANY = 0.6     # s: bridge a gap this short even if the box changed (avoids black flashes)
 MIN_AUTO_SHARE = 0.2  # a person must be on screen this much of the video to be cropped without asking
 CONTINUE_GAP = 3.0    # s: an unrecognised window still counts as continuing the child's last one this long after it
+ANCHOR_GAP = 6.0      # s: a lost child's tile is kept this long while the other person's tile stays put
 
 FLAG_TEXT = {
     "missing": "Child's tile not found",
-    "other": "Other windows on screen, none of them the child's",
+    "other": "Child's tile not identified in this span",
     "filled": "Lost briefly; previous box reused",
     "bridged": "Lost for a moment; same box before and after",
-    "inferred": "Child not recognised in the tile; it is the window left after the experimenter's",
+    "inferred": "Child not recognised in the tile; it is the window left once the other person's is accounted for",
+    "anchored": "Tile not found for a moment; the other person's tile had not moved, so the child's box is kept",
     "held": "Window at the child's previous place; nobody on screen was recognised",
     "unsure": "A video window is on screen but could not be told apart from the experimenter's",
     "look": "Name label not visible; identified by appearance",
@@ -116,9 +118,10 @@ def _sized_like(b, others) -> bool:
 
 def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
           exp_pids: set[int] | None = None) -> list[dict]:
-    """exp_pids: participants known to be experimenters. Their windows are never the
-    child's, and a frame where they are accounted for lets the child's window be
-    taken by elimination when the child was not recognised in it."""
+    """exp_pids: the other real people in the video (experimenters, registered or not).
+    Their windows are never the child's, and a frame where they are accounted for lets
+    the child's window be taken by elimination when the child was not recognised in it;
+    while their window stays put, a child's window the finder briefly lost is kept."""
     H = analysis["video"]["height"]
     duration = analysis["video"]["duration"]
     tol = max(3, round(GROUP_TOL * H / 1080))
@@ -132,6 +135,7 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
     entries = []
     prev_box = None
     prev_t = -1e9
+    prev_others: list = []  # the other people's boxes when the child's box was last known
     for s in analysis["samples"]:
         mine = [t for t in s["tiles"] if t["pid"] == pid]
         peers = [t["box"] for t in s["tiles"] if t["pid"] is not None and t["pid"] != pid]
@@ -171,6 +175,13 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
                     flags.add("unsure")
             elif cands:
                 flags.add("unsure")
+            if t is None and not cands and prev_box is not None and s["t"] - prev_t <= ANCHOR_GAP and exp_boxes and prev_others \
+                    and any(iou(a, b) >= 0.8 for a in exp_boxes for b in prev_others):
+                # the finder lost the child's tile, but the other person's tile has not
+                # moved: the strip is where it was, and so is the child's window
+                entries.append((s["t"], prev_box, {"anchored"}, None))
+                prev_t = s["t"]
+                continue
         if t is not None:
             box = t["box"]
             # a box that shrank into the previous one is a piece of the same window (an edge
@@ -178,6 +189,8 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
             if prev_box is not None and t["src"] != "label" and _nested(box, prev_box):
                 box = prev_box
             prev_box, prev_t = box, s["t"]
+            if exp_boxes:
+                prev_others = exp_boxes
             if t["clip"]:
                 flags.add("clipped")
             if t["flat"]:

@@ -276,6 +276,13 @@ def link_named_faces(job: dict) -> bool:
     return changed
 
 
+def other_people(job: dict) -> set[int]:
+    """Everyone but the chosen child who is a real person (showed a face, or is a
+    registered experimenter): their windows can never be the child's."""
+    return {p["id"] for p in job["participants"] if p["id"] != job.get("child_pid")
+            and (p.get("face") or timeline.is_experimenter(p, settings["experimenters"]))}
+
+
 def settle(job: dict, queue_render: bool = True) -> bool:
     """Decide who to crop without asking, if the rule allows it; queue the render then."""
     d = timeline.decide(job["participants"], settings["experimenters"])
@@ -371,8 +378,7 @@ def worker():
                 analysis = read_json(jdir / "analysis.json")
                 pid = job["child_pid"]
                 job["child_name"] = next((p["name"] for p in job["participants"] if p["id"] == pid), "")
-                segs = timeline.build(analysis, pid, job["overrides"],
-                                      timeline.experimenter_ids(job["participants"], settings["experimenters"]))
+                segs = timeline.build(analysis, pid, job["overrides"], other_people(job))
                 set_status(job, "rendering", progress=0.0, error="", started=time.time())
                 t0 = time.time()
                 # The result stays in the workspace for review; nothing is written
@@ -626,8 +632,7 @@ async def set_overrides(jid: str, request: Request):
         clean.append(item)
     jdir = JOBDIR / jid
     analysis = await asyncio.to_thread(read_json, jdir / "analysis.json")
-    segs = timeline.build(analysis, job["child_pid"], clean,
-                          timeline.experimenter_ids(job["participants"], settings["experimenters"]))
+    segs = timeline.build(analysis, job["child_pid"], clean, other_people(job))
     with lock:
         job["overrides"] = clean
         job["rev"] += 1

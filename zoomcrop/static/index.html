@@ -181,6 +181,8 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
 .nochild { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #aaa; background: rgba(0,0,0,.6); font-size: 12px; pointer-events: none; }
 #box { position: absolute; border: 1px solid #ff4d4d; box-shadow: 0 0 0 1px rgba(0,0,0,.6); pointer-events: none; display: none; }
 #box.manual { border-color: var(--manual); border-style: dashed; }
+#box.ghost { border-color: #9a9a9a; border-style: dashed; opacity: .75; }
+#box.ghost .h { border-color: #9a9a9a; }
 #box.editable { pointer-events: auto; cursor: move; }
 #box .h { display: none; position: absolute; width: 9px; height: 9px; background: #fff; border: 1px solid #ff4d4d; pointer-events: auto; }
 #box.editable .h { display: block; }
@@ -659,7 +661,8 @@ async function showReview(j) {
           <button id="qHold" title="Keep the box from just before the span">Keep previous box</button>
           <button id="qNone" title="Black output for the span">No child here</button>
           <button id="fDraw" title="Draw a fresh box on the original">Draw a box</button>
-          <button id="qClear" class="ghost" title="Clear the marked span (Esc)">Clear span</button></div>
+          <button id="qClear" class="ghost" title="Clear the marked span (Esc)">Clear span</button>
+          <button id="qHoldAll" title="For every span to check: keep the box from just before it (one undoable step)">Keep previous box for all</button></div>
         <details id="moreFix"><summary>Type the times or the box</summary>
           <div class="timegrid">
             <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}"><output id="faOut"></output><button id="faNow">Playhead</button>
@@ -840,11 +843,17 @@ async function showReview(j) {
     if (sx1 - sx0 < 2 || sy1 - sy0 < 2) return;
     try { ctx.drawImage(vsrc, sx0, sy0, sx1 - sx0, sy1 - sy0, (sx0 - x0) / w * 640, (sy0 - y0) / h * 360, (sx1 - sx0) / w * 640, (sy1 - sy0) / h * 360); } catch (err) {}
   }
-  function placeBox(b, manual) {
+  function placeBox(b, manual, ghost) {
     if (!b) { box.style.display = "none"; return; }
     const [x0, y0, x1, y1] = b;
     box.style.cssText = `display:block;left:${x0 / V.width * 100}%;top:${y0 / V.height * 100}%;width:${(x1 - x0) / V.width * 100}%;height:${(y1 - y0) / V.height * 100}%`;
-    box.classList.toggle("manual", !!manual);
+    box.classList.toggle("manual", !!manual); box.classList.toggle("ghost", !!ghost);
+  }
+  // the last box before t (when the span at t has none): shown as a ghost to drag into place
+  function ghostAt(t) {
+    const sg = R.d.segments;
+    for (let i = sg.length - 1; i >= 0; i--) if (sg[i].start <= t && sg[i].box) return sg[i].box;
+    return sg.find(x => x.box)?.box || null;
   }
   function frame() {
     const t = cur();
@@ -865,7 +874,7 @@ async function showReview(j) {
       $("#sbLeft").innerHTML = `${R.dirty || R.saving ? `<span class="warn">unsaved</span>` : "Saved"} · ${R.overrides.length} correction${R.overrides.length === 1 ? "" : "s"} · ${R.reviews.length} to check · <b>${V.width} × ${V.height}</b> · ${(V.fps || 0).toFixed(2)} fps · ${R.zoom.toFixed(1)}× zoom`;
     }
     const e = R.boxDrag ? {box: R.boxDrag.box, manual: true} : effAt(t);
-    if (!R.boxDrag) placeBox(e.box, e.manual);
+    if (!R.boxDrag) { if (e.box) placeBox(e.box, e.manual); else { const g = vsrc.paused ? ghostAt(t) : null; placeBox(g, false, true); } }
     $("#nochild").style.display = e.box ? "none" : "flex";
     drawPreview(e);
     drawTiles(t);
@@ -943,7 +952,7 @@ async function showReview(j) {
   const toVideo = e => { const r = stageEl.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * V.width, (e.clientY - r.top) / r.height * V.height]; };
   box.addEventListener("pointerdown", e => {
     if (!vsrc.paused || !box.classList.contains("editable")) return;
-    const b = effAt(cur()).box; if (!b) return;
+    const b = effAt(cur()).box || ghostAt(cur()); if (!b) return;
     e.preventDefault(); box.setPointerCapture(e.pointerId);
     const h = e.target.classList.contains("h") ? e.target.className.replace("h ", "") : null;
     R.boxDrag = {start: toVideo(e), orig: b, box: b.slice(), handle: h};
@@ -965,7 +974,8 @@ async function showReview(j) {
   const endBoxDrag = e => {
     const g = R.boxDrag; if (!g) return;
     R.boxDrag = null;
-    if (g.box.some((v, i) => Math.abs(v - g.orig[i]) >= 1)) { setFix(g.box); toast(`Box moved for ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])}. Ctrl+Z undoes it.`); }
+    const wasGhost = !effAt(cur()).box;
+    if (wasGhost || g.box.some((v, i) => Math.abs(v - g.orig[i]) >= 1)) { setFix(g.box); toast(`${wasGhost ? "Box set" : "Box moved"} for ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])}. Ctrl+Z undoes it.`); }
   };
   box.addEventListener("pointerup", endBoxDrag);
   box.addEventListener("pointercancel", endBoxDrag);
@@ -1056,6 +1066,12 @@ async function showReview(j) {
   R.saveNow = saveNow;
   $("#qHold").onclick = () => { vsrc.pause(); setFix({mode: "hold"}); toast("This span keeps the box from just before it."); };
   $("#qNone").onclick = () => { vsrc.pause(); setFix(null); toast("This span is marked as no child."); };
+  $("#qHoldAll").onclick = () => {
+    const spans = R.reviews.filter(r => !R.overrides.some(x => Math.abs(x.start - r.start) < 1e-3 && Math.abs(x.end - r.end) < 1e-3));
+    if (!spans.length) { toast("Nothing left to check."); return; }
+    mutate(() => spans.forEach(r => R.overrides.push({start: r.start, end: r.end, mode: "hold", fresh: true})));
+    toast(`${spans.length} span${spans.length > 1 ? "s" : ""} keep the box from just before them. Ctrl+Z undoes all of it.`);
+  };
   $("#fAdd").onclick = () => {
     const x = Math.round(+bx.value), y = Math.round(+by.value), w = Math.round(+bw.value);
     if (bw.value === "" || !(w >= 60)) { $("#fErr").textContent = "Enter a box (width at least 60), or just drag the red box on the original."; return; }
