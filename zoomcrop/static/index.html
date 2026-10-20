@@ -626,7 +626,7 @@ async function showReview(j) {
     <video id="vthumb" muted preload="auto" src="/api/jobs/${j.id}/source" hidden aria-hidden="true"></video>
     <div class="ed-left">
       <div class="ed-viewers">
-        <div class="viewer"><div class="vlabel"><span>Original</span><span class="vhint">drag the red box or a corner · click a dotted tile to take it</span></div>
+        <div class="viewer"><div class="vlabel"><span>Original</span><span class="vhint">pause, then click the child's window to crop it · drag the red box or a corner</span></div>
           <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
             <video id="vsrc" playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
             <canvas id="tilelayer"></canvas>
@@ -920,7 +920,8 @@ async function showReview(j) {
     const [a, b] = targetSpan();
     const o = Object.assign({start: a, end: b}, what === null ? {box: null} : what.mode ? {mode: "hold"} : {box: what});
     mutate(() => {
-      const k = R.overrides.findIndex(x => x.mode !== "ok" && Math.abs(x.start - a) < 1e-3 && Math.abs(x.end - b) < 1e-3);
+      // the same span again (typed times are rounded to 1/100 s, detected spans are not) replaces the earlier fix
+      const k = R.overrides.findIndex(x => x.mode !== "ok" && Math.abs(x.start - a) < 0.05 && Math.abs(x.end - b) < 0.05);
       if (k >= 0) R.overrides[k] = {...o, fresh: true}; else R.overrides.push({...o, fresh: true});
     });
     setRange(a, b);
@@ -960,12 +961,34 @@ async function showReview(j) {
   }
   tlayer.addEventListener("pointermove", e => { const r = tlayer.getBoundingClientRect(); R.hover = [(e.clientX - r.left) / r.width * V.width, (e.clientY - r.top) / r.height * V.height]; });
   tlayer.addEventListener("pointerleave", () => { R.hover = null; });
-  tlayer.addEventListener("click", () => {
-    if (!R.hit) { toggle(); return; }
-    vsrc.pause();
-    const [x0, y0, x1, y1] = R.hit;
-    setFix([x0, y0, x1, y1]);
-    toast(`Fixed ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])} with that tile. Ctrl+Z undoes it.`);
+  // Paused: one click on the child's window crops it. The window around the clicked point
+  // is measured afresh in this very frame (exact edges); failing that, the tile the analysis
+  // found here; failing that, the current box is centred on the click.
+  function takeWindowAt(px, py) {
+    const t = cur(), jobId = R.jobId, hit = R.hit && R.hit.slice(0, 4);
+    api(`/api/jobs/${jobId}/tile_at?t=${t.toFixed(3)}&x=${px.toFixed(1)}&y=${py.toFixed(1)}`).catch(() => ({box: null})).then(res => {
+      if (!R || R.jobId !== jobId || Math.abs(cur() - t) > 0.3) return;
+      let b = res.box || hit, how = res.box ? "Window measured here" : hit ? "Detected tile taken" : "No window edges here; box centred on the click";
+      if (!b) {
+        const c = effAt(t).box || ghostAt(t); if (!c) return;
+        const w = c[2] - c[0], h = c[3] - c[1];
+        const x0 = Math.round(Math.min(Math.max(0, px - w / 2), V.width - w)), y0 = Math.round(Math.min(Math.max(0, py - h / 2), V.height - h));
+        b = [x0, y0, x0 + w, y0 + h];
+      }
+      setFix(b);
+      toast(`${how}: ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])}. Ctrl+Z undoes it.`);
+    });
+  }
+  tlayer.addEventListener("click", e => {
+    if (!vsrc.paused || !box.classList.contains("editable")) {
+      if (!R.hit) { toggle(); return; }
+      vsrc.pause();
+      setFix(R.hit.slice(0, 4));
+      toast(`Fixed ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])} with that tile. Ctrl+Z undoes it.`);
+      return;
+    }
+    const r = tlayer.getBoundingClientRect();
+    takeWindowAt((e.clientX - r.left) / r.width * V.width, (e.clientY - r.top) / r.height * V.height);
   });
 
   // ----- the red box itself: drag to move, drag a corner to resize (16:9 kept) -----
@@ -997,6 +1020,7 @@ async function showReview(j) {
     R.boxDrag = null;
     const wasGhost = !effAt(cur()).box;
     if (wasGhost || g.box.some((v, i) => Math.abs(v - g.orig[i]) >= 1)) { setFix(g.box); toast(`${wasGhost ? "Box set" : "Box moved"} for ${fmt(targetSpan()[0])} – ${fmt(targetSpan()[1])}. Ctrl+Z undoes it.`); }
+    else if (!g.handle && e.type === "pointerup") { const [px, py] = toVideo(e); takeWindowAt(px, py); }  // a plain click: crop the window here
   };
   box.addEventListener("pointerup", endBoxDrag);
   box.addEventListener("pointercancel", endBoxDrag);

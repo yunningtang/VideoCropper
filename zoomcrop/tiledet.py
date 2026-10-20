@@ -115,11 +115,21 @@ def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
         dy = abs((g.y0 + g.y1) - (tl.y0 + tl.y1)) / 2
         return dx <= 0.12 * tl.w and dy <= 0.12 * tl.h
 
+    def frames_it(g: Tile, tl: Tile) -> bool:
+        """The model's box is the wrong shape (it cut the top off a tile, or took in the
+        name strip below it) and a well-backed 16:9 geometric box holds it: that box is
+        the tile."""
+        if g.score < 0.9 or abs(g.w / g.h - ASPECT) > 0.04 * ASPECT or abs(tl.w / tl.h - ASPECT) < 0.08 * ASPECT:
+            return False
+        ix = max(0, min(g.x1, tl.x1) - max(g.x0, tl.x0))
+        iy = max(0, min(g.y1, tl.y1) - max(g.y0, tl.y0))
+        return ix * iy >= 0.8 * tl.w * tl.h and g.w * g.h <= 1.6 * tl.w * tl.h
+
     for tl in learned:
         # the model's box can be off by a sidebar's width (icons next to the tile get
         # included); a geometric box that is the same tile measured on its real edges
         # replaces it
-        twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6 and twin_of(g, tl)),
+        twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6 and (twin_of(g, tl) or frames_it(g, tl))),
                    key=lambda g: iou(g.box, tl.box), default=None)
         if twin is not None:
             out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut, src="both"))

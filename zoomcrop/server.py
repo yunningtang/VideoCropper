@@ -973,6 +973,50 @@ async def source(jid: str):
     return FileResponse(p if p.exists() else job["src"])
 
 
+_tile_finder = None
+
+
+def tile_around(src: str, t: float, x: float, y: float):
+    """The video tile that contains the point (x, y) in the frame at t, found afresh in that
+    frame by both finders (the smallest one when nested), or None."""
+    import av
+    import cv2
+    from .detect import find_tiles
+    from .tiledet import MODEL_FILE, TileDetector, merge
+    global _tile_finder
+    if _tile_finder is None and MODEL_FILE.exists():
+        _tile_finder = TileDetector()
+    with av.open(src) as c:
+        v = c.streams.video[0]
+        c.seek(max(0, int((t - 0.5) / v.time_base)), stream=v)
+        frame = next((f for f in c.decode(v) if f.time is not None and f.time >= t - 1e-3), None)
+        if frame is None:
+            return None
+        bgr = frame.to_ndarray(format="bgr24")
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    tiles = find_tiles(gray)
+    if _tile_finder is not None:
+        tiles = merge(_tile_finder.detect(bgr, gray), tiles)
+    inside = [tl for tl in tiles if tl.x0 <= x <= tl.x1 and tl.y0 <= y <= tl.y1]
+    if not inside:
+        return None
+    tl = min(inside, key=lambda k: (k.x1 - k.x0) * (k.y1 - k.y0))
+    return [int(tl.x0), int(tl.y0), int(tl.x1), int(tl.y1)]
+
+
+@app.get("/api/jobs/{jid}/tile_at")
+async def tile_at(jid: str, t: float, x: float, y: float):
+    """For the one-click fix: the tile under the clicked point in the frame at t."""
+    job = get_job(jid)
+    if not job.get("video"):
+        raise HTTPException(409, "analysis not finished")
+    try:
+        box = await asyncio.to_thread(tile_around, job["src"], max(0.0, t), x, y)
+    except Exception as e:  # a decode hiccup must not break the page
+        raise HTTPException(500, f"Could not read that frame: {e}")
+    return {"box": box}
+
+
 @app.get("/api/jobs/{jid}/tiles")
 def tiles(jid: str):
     """Every video tile found at every analysed moment, for the page's snap-to-tile:

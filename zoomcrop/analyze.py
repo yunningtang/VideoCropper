@@ -61,6 +61,10 @@ TOGETHER = 0.05      # share of frames two tracks may share and still be the sam
 FACE_SAME = 0.45     # SFace cosine similarity above which two faces are the same person
 FACE_OTHER = 0.25    # ... and below which they are certainly not (SFace's own cutoff is 0.363)
 FACE_MIN_VOTES = 3   # face samples that must agree before a remembered experimenter is recognised
+FACE_MIN_SHARE = 0.5 # ... and the share of the person's face samples that must agree (a child's face
+                     # brushes past an adult's threshold now and then; a real match does so most of the time)
+UNDER_TILE = 0.15    # overlap (share of the smaller box) at which a labelled window "sits on" a box
+UNDER_SHARE = 0.3    # share of a box's frames with a labelled window on it that makes it screen content
 MODELS = Path(__file__).resolve().parent / "models"
 OCR_PER_FRAME = 6    # at most this many label reads per analysed frame
 REFINE_MAX = 6       # frames looked at between two samples while a window is being dragged
@@ -182,23 +186,24 @@ class FaceReader:
         self.rec = cv2.FaceRecognizerSF.create(str(MODELS / "face_recognition_sface_2021dec.onnx"), "")
 
     def read(self, bgr: np.ndarray, box):
-        """(feature, quality) or (None, 0)."""
+        """(feature, quality, face centre in frame coordinates) or (None, 0, None)."""
         H, W = bgr.shape[:2]
         x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(W, box[2]), min(H, box[3])
         if x1 - x0 < 60 or y1 - y0 < 30:
-            return None, 0.0
+            return None, 0.0, None
         crop = bgr[y0:y1, x0:x1]
         scale = 480 / crop.shape[1]  # a face in a small tile is ~40 px; the detector likes it bigger
         big = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         self.det.setInputSize((big.shape[1], big.shape[0]))
         _, faces = self.det.detect(big)
         if faces is None or len(faces) == 0:
-            return None, 0.0
+            return None, 0.0, None
         face = max(faces, key=lambda f: f[2] * f[3])
         if face[2] / scale < 20:
-            return None, 0.0
+            return None, 0.0, None
         feat = self.rec.feature(self.rec.alignCrop(big, face))
-        return feat, float(face[-1]) * float(face[2] / scale)
+        centre = (x0 + (face[0] + face[2] / 2) / scale, y0 + (face[1] + face[3] / 2) / scale)
+        return feat, float(face[-1]) * float(face[2] / scale), centre
 
     def same(self, a, b) -> float:
         return float(self.rec.match(np.asarray(a, np.float32).reshape(1, -1),
@@ -319,6 +324,14 @@ def _inside(inner, outer, tol: int = 6, ratio: float = 0.6) -> bool:
         return False
     return (inner[0] >= outer[0] - tol and inner[1] >= outer[1] - tol
             and inner[2] <= outer[2] + tol and inner[3] <= outer[3] + tol)
+
+
+def _area(b) -> int:
+    return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+
+def _contains(b, pt) -> bool:
+    return b[0] <= pt[0] <= b[2] and b[1] <= pt[1] <= b[3]
 
 
 def _takes_in(outer, inner) -> bool:
@@ -666,7 +679,12 @@ class Analyzer:
             if tr.keep and tr.keep[-1] is o and o.face is None and not o.face_q:
                 if bgr is None:
                     bgr = frame.to_ndarray(format="bgr24")
-                o.face, o.face_q = self.faces.read(bgr, o.box)
+                o.face, o.face_q, at = self.faces.read(bgr, o.box)
+                if o.face is not None and any(q is not o and _area(q.box) < _area(o.box) and _contains(q.box, at)
+                                              for q in obs):
+                    # the face sits in a smaller tile drawn over this box: it is that tile's
+                    # face, and this box (a slide picture under the floating tiles) has none
+                    o.face = None
                 if o.face is None:
                     o.face_q = -1.0  # looked, found nothing
 
@@ -917,6 +935,24 @@ class Analyzer:
                     for o in tr.obs)
             if n >= 0.5 * len(tr.obs):
                 junk.add(tr.id)
+
+        # Zoom never draws two windows over each other. A box without a name of its own that a
+        # labelled window partly covers (a picture on the slide under the floating video strip)
+        # is screen content, whatever moves inside it.
+        def under(o, q) -> bool:
+            ix = max(0, min(o.box[2], q.box[2]) - max(o.box[0], q.box[0]))
+            iy = max(0, min(o.box[3], q.box[3]) - max(o.box[1], q.box[1]))
+            return ix * iy >= UNDER_TILE * min(_area(o.box), _area(q.box)) and not _takes_in(o.box, q.box)                 and not _takes_in(q.box, o.box)
+
+        for tr in tracks:
+            if tr.id in junk or names[tr.id]:
+                continue
+            n = sum(any(q.tid != tr.id and q.tid not in junk and names[q.tid] and under(o, q)
+                        for q in byframe.get(frame_of.get(id(o), -1), []))
+                    for o in tr.obs)
+            if n >= UNDER_SHARE * len(tr.obs):
+                junk.add(tr.id)
+                self.junk_log.append((tr.id, -1, "under"))
 
         def outside_active(outer: Track, inner: Track) -> float:
             """Share of outer's sample pairs (with inner present in both) whose picture
@@ -1189,7 +1225,8 @@ class Analyzer:
         if not votes:
             return ""
         name, n = votes.most_common(1)[0]
-        return name if n >= FACE_MIN_VOTES else ""
+        total = sum(len(faces[a]) for a in members)
+        return name if n >= FACE_MIN_VOTES and n >= FACE_MIN_SHARE * total else ""
 
     def _best_view(self, views):
         """The picture shown when asking who is who: a big, fully visible, well-detected

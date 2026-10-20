@@ -36,9 +36,11 @@ window to quit.
 3. Open a finished video: the original with a red box on the left, the cropped preview
    on the right, playing in sync. On the timeline, tall orange blocks are spans worth
    checking; red hatching means the child's tile was not found.
-4. To fix a span, enter its start and end under Manual fix, drag a box on the original
-   or type the coordinates (or choose "no child" / "keep the previous box"), then
-   Apply and re-export.
+4. To fix a span: pause where the crop is wrong and click the child's window on the
+   original. The window's edges are measured in that very frame and the fix covers the
+   span up to the next layout change; it is saved at once and the preview re-exported in
+   the background. The red box can also be dragged, or a corner pulled; "No child here"
+   and "Keep previous box" cover the other cases, and I / O mark a span of your own.
 5. Click Reviewed, next video to move on to the next unreviewed video.
 6. Results stay in the tool's own workspace until you click Export… and choose which
    videos, which folder (Browse… opens the system folder dialog) and which files. If a
