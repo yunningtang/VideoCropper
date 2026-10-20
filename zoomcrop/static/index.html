@@ -176,6 +176,13 @@ kbd { font: inherit; font-size: 12px; border: 1px solid var(--line); border-bott
 .card h3 { margin: 0 0 2px; font-size: 14.5px; }
 .card .desc { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
 .rows { max-height: 320px; overflow: auto; margin: 0 -6px; list-style: none; padding: 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; max-height: 520px; overflow: auto; padding: 2px; }
+.cardt { border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cardt.miss { border-color: var(--bad-fill); } .cardt.warn { border-color: var(--warn-fill); }
+.cardt .thumb { display: block; width: 100%; aspect-ratio: 16/9; height: auto; background: #000; border-radius: 6px; cursor: pointer; }
+.cardt .cmeta { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.cardt .why { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardt .cbtn { display: flex; gap: 6px; } .cardt .cbtn button { flex: 1; min-height: 26px; padding: 2px 6px; }
 .rows li { display: flex; align-items: center; gap: 4px; }
 .jump {
   flex: 1; min-width: 0; display: grid; grid-template-columns: 72px 112px 46px 1fr; gap: 8px; align-items: center;
@@ -569,6 +576,7 @@ async function showReview(j) {
         exportState(d) === "none" ? "not yet" : exportState(d) === "stale" ? "yes, but changed since" : `to ${esc(d.exported.dir)}`}</dd></div>
       <div id="rstate"></div>
     </dl>
+    <video id="vthumb" muted preload="auto" src="/api/jobs/${j.id}/source" hidden aria-hidden="true"></video>
     <div class="players">
       <figure><figcaption><span>Original · drag the red box or its corners to fix it · hover to pick a detected tile</span></figcaption>
         <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
@@ -642,7 +650,7 @@ async function showReview(j) {
     let out = s ? {box: s.box, flags: s.flags, manual: s.flags.includes("manual")} : {box: null, flags: [], manual: false};
     for (let k = 0; k < upto; k++) {
       const o = R.overrides[k];
-      if (!o.fresh || t < o.start || t >= o.end) continue;  // saved fixes are already in the segments
+      if (!o.fresh || o.mode === "ok" || t < o.start || t >= o.end) continue;  // saved fixes are already in the segments; "ok" changes no box
       out = {manual: true, flags: ["manual"], box: o.mode === "hold" ? effAt(o.start - 0.001, k).box : (o.box || null)};
     }
     return out;
@@ -679,14 +687,48 @@ async function showReview(j) {
     $("#fMoves").textContent = sm.layout_changes;
     $("#fCheck").textContent = `${plural(reviews.length, "span")}, ${secs.toFixed(1)} s`; $("#fCheck").className = reviews.length ? "attn" : "";
     $("#prevFlag").disabled = $("#nextFlag").disabled = $("#only").disabled = !reviews.length;
-    $("#revlist").innerHTML = reviews.length ? `<ul class="rows" id="reviews">${reviews.map((r, i) => `<li>
-        <button class="jump" data-i="${i}"><span class="chip ${r.c === "miss" ? "err" : "flag"}">${r.c === "miss" ? "No child" : "Check"}</span>
-          <span>${fmt(r.start)} – ${fmt(r.end)}</span><span>${(r.end - r.start).toFixed(1)}s</span>
-          <span class="why" title="${esc([...r.why].join("; "))}">${esc([...r.why].join("; "))}</span></button>
-        <button class="ghost" data-fix="${i}" aria-label="Fix the span from ${fmt(r.start)} to ${fmt(r.end)}">Fix</button></li>`).join("")}</ul>`
-      : `<p class="none">Nothing is flagged. It is still worth scrubbing through once before marking the video as reviewed.</p>`;
+    // one card per span: what the crop looks like in the middle of it (the whole frame
+    // when there is no crop), so that a glance tells right from wrong
+    for (const r of reviews) { const s = segs.find(s => s.start <= (r.start + r.end) / 2 && s.end > (r.start + r.end) / 2 && s.box) || segs.find(s => s.start >= r.start && s.start < r.end && s.box); r.box = s ? s.box : null; }
+    $("#revlist").innerHTML = reviews.length ? `<div class="cards" id="reviews">${reviews.map((r, i) => `<div class="cardt ${r.c}" data-i="${i}">
+        <canvas class="thumb" width="192" height="108" data-t="${((r.start + r.end) / 2).toFixed(3)}" data-box="${r.box ? r.box.join(",") : ""}" title="Click to jump there"></canvas>
+        <div class="cmeta"><span class="chip ${r.c === "miss" ? "err" : "flag"}">${r.c === "miss" ? "No child" : "Check"}</span><span>${fmt(r.start)} – ${fmt(r.end)} · ${(r.end - r.start).toFixed(1)}s</span></div>
+        <div class="why" title="${esc([...r.why].join("; "))}">${esc([...r.why].join("; "))}</div>
+        <div class="cbtn"><button data-ok="${i}" title="The crop is right here; stop flagging it">OK</button><button class="primary" data-fix="${i}">Fix</button></div></div>`).join("")}</div>`
+      : `<p class="none">Nothing to check. It is still worth scrubbing through once before marking the video as reviewed.</p>`;
+    loadThumbs();
+  }
+  // thumbnails are cut from a second, hidden copy of the video so that playback is not disturbed
+  const vthumb = $("#vthumb");
+  R.thumbCache = R.thumbCache || {};
+  function loadThumbs() {
+    const todo = [...document.querySelectorAll("#revlist canvas.thumb")];
+    const next = () => {
+      const c = todo.shift(); if (!c || !R || R.jobId !== j.id) return;
+      const key = `${c.dataset.t}|${c.dataset.box}`;
+      if (R.thumbCache[key]) { const img = new Image(); img.onload = () => { c.getContext("2d").drawImage(img, 0, 0); next(); }; img.src = R.thumbCache[key]; return; }
+      const draw = () => {
+        vthumb.removeEventListener("seeked", draw);
+        const g = c.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, 192, 108);
+        try {
+          if (c.dataset.box) {
+            const [x0, y0, x1, y1] = c.dataset.box.split(",").map(Number), w = x1 - x0, h = y1 - y0;
+            const sx0 = Math.max(0, x0), sy0 = Math.max(0, y0), sx1 = Math.min(V.width, x1), sy1 = Math.min(V.height, y1);
+            g.drawImage(vthumb, sx0, sy0, sx1 - sx0, sy1 - sy0, (sx0 - x0) / w * 192, (sy0 - y0) / h * 108, (sx1 - sx0) / w * 192, (sy1 - sy0) / h * 108);
+          } else { g.drawImage(vthumb, 0, 0, V.width, V.height, 0, 0, 192, 108); }
+          R.thumbCache[key] = c.toDataURL("image/jpeg", 0.7);
+        } catch (err) {}
+        next();
+      };
+      vthumb.addEventListener("seeked", draw);
+      vthumb.currentTime = +c.dataset.t;
+    };
+    if (vthumb.readyState >= 1) next(); else vthumb.addEventListener("loadedmetadata", next, {once: true});
   }
   $("#revlist").addEventListener("click", e => {
+    const ok = e.target.closest("[data-ok]"), thumb = e.target.closest("canvas.thumb");
+    if (ok) { const r = R.reviews[+ok.dataset.ok]; mutate(() => R.overrides.push({start: r.start, end: r.end, mode: "ok", fresh: true})); toast(`${fmt(r.start)} – ${fmt(r.end)} accepted. Ctrl+Z undoes it.`); return; }
+    if (thumb) { vsrc.pause(); seek(+thumb.dataset.t); return; }
     const fix = e.target.closest("[data-fix]"), go = e.target.closest(".jump");
     if (go) seek(Math.max(0, R.reviews[+go.dataset.i].start - 0.5));
     if (fix) { const r = R.reviews[+fix.dataset.fix]; vsrc.pause(); seek(r.start + 0.05); setRange(r.start, r.end); toast("Span marked. Click the right tile on the original, or drag the red box."); }
@@ -869,7 +911,7 @@ async function showReview(j) {
   $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
 
   // ----- fixes: list, undo / redo, autosave -----
-  const ovText = o => o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]} at ${o.box[0]},${o.box[1]}` : "no child";
+  const ovText = o => o.mode === "ok" ? "looked at, accepted" : o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]} at ${o.box[0]},${o.box[1]}` : "no child";
   function drawOvs() {
     $("#ovs").innerHTML = R.overrides.map((o, i) => `<li><span>${fmt(o.start)} – ${fmt(o.end)}</span><span>${ovText(o)}</span><span class="spacer"></span>
       <button class="ghost" data-go="${i}">Show</button><button class="ghost danger" data-rm="${i}" aria-label="Delete the fix from ${fmt(o.start)} to ${fmt(o.end)}">Delete</button></li>`).join("")

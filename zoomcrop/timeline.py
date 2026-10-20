@@ -33,6 +33,7 @@ FLAG_TEXT = {
     "clipped": "Tile partly off-screen",
     "camera_off": "Camera may be off",
     "manual": "Set by hand",
+    "checked": "Looked at and accepted",
 }
 REVIEW_FLAGS = ("held", "unsure", "look", "camera_off")  # "filled" (a sub-second gap bridged with the box before it) is noted, not reviewed
 MIN_REVIEW = 0.5  # s: doubtful spans shorter than this, in a row, are not worth a look
@@ -244,7 +245,8 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
             s["box"] = _fit_aspect(s["box"])
 
     for ov in overrides or []:
-        segs = _apply_override(segs, ov)
+        if ov.get("mode") != "ok":  # "ok" = looked at and left as is; handled after the review pass
+            segs = _apply_override(segs, ov)
 
     out = []
     for s in segs:
@@ -271,6 +273,12 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
             for s in run:
                 s["review"] = True
         i = j
+    for ov in overrides or []:  # spans the reviewer looked at and accepted
+        if ov.get("mode") == "ok":
+            for s in out:
+                if s["review"] and s["start"] < ov["end"] - 1e-6 and s["end"] > ov["start"] + 1e-6:
+                    s["review"] = False
+                    s["flags"] = sorted(set(s["flags"]) | {"checked"})
     return out
 
 

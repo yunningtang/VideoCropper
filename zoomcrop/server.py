@@ -557,8 +557,8 @@ async def set_overrides(jid: str, request: Request):
         item = {"start": float(ov["start"]), "end": float(ov["end"])}
         if item["end"] <= item["start"]:
             continue
-        if ov.get("mode") == "hold":
-            item["mode"] = "hold"
+        if ov.get("mode") in ("hold", "ok"):
+            item["mode"] = ov["mode"]
         elif ov.get("box"):
             item["box"] = [int(round(float(v))) for v in ov["box"]]
         else:
