@@ -123,7 +123,8 @@ def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
             used.add(id(twin))
         else:
             out.append(tl)
+    kept = list(out)  # the learned boxes (or their twins): geometric boxes are judged against these only
     for g in geometric:
-        if id(g) not in used and all(iou(g.box, o.box) < PHANTOM_IOU for o in out):
+        if id(g) not in used and all(iou(g.box, o.box) < PHANTOM_IOU for o in kept):
             out.append(g)
     return out

@@ -57,6 +57,7 @@ input[type=text], input[type=number], select {
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
 .spacer { flex: 1; }
 .sidefoot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.offline { position: fixed; top: 0; left: 0; right: 0; z-index: 30; padding: 10px 18px; background: var(--bad); color: #fff; font-weight: 600; text-align: center; }
 .sidefoot button { flex: 1; }
 .layout { display: grid; grid-template-columns: minmax(250px, 330px) 1fr; min-height: 0; }
 /* the sidebar is set apart by its background alone: no rules or borders around the list */
@@ -254,6 +255,7 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
+<div id="offline" class="offline" role="alert" hidden>The tool's server is not answering. Is the black console window still open? Start it again with start.bat; this page will reconnect on its own.</div>
 <div class="layout">
   <aside aria-label="Videos">
     <h1 class="sr">Zoom Child Crop</h1>
@@ -415,14 +417,18 @@ function select(id) {
 }
 window.addEventListener("beforeunload", e => { if (unsaved()) e.preventDefault(); });
 
+let offline = 0;
 async function poll() {
   try {
     const st = await api("/api/state");
     S.jobs = st.jobs; S.settings = st.settings; S.clock = st.now - Date.now() / 1000;
     if (S.sel && !S.jobs.some(j => j.id === S.sel)) S.sel = null;
     if (!S.sel && S.jobs.length) S.sel = (S.jobs.find(j => j.status === "choose") || S.jobs[S.jobs.length - 1]).id;
+    if (offline) { offline = 0; $("#offline").hidden = true; }
     renderList(); refreshMain();
-  } catch (e) { /* server restarting */ }
+  } catch (e) {
+    if (++offline === 3) $("#offline").hidden = false;  // three misses in a row: the server is gone, not just busy
+  }
 }
 
 /* ---------- main panel ---------- */
@@ -556,14 +562,20 @@ $("#main").addEventListener("click", e => {
 
 /* ---------- review ---------- */
 let R = null;  // state of the open review view
-function stopReview() { if (R) { cancelAnimationFrame(R.raf); document.removeEventListener("keydown", R.onKey); clearTimeout(R.saveTimer); if (R.dirty && R.saveNow) R.saveNow().catch(() => {}); R = null; } }
+let lastPos = {id: null, t: 0};  // where the playhead was when a review screen was last left
+function stopReview() { if (R) { lastPos = {id: R.jobId, t: R.cur()}; cancelAnimationFrame(R.raf); document.removeEventListener("keydown", R.onKey); clearTimeout(R.saveTimer); if (R.dirty && R.saveNow) R.saveNow().catch(() => {}); R = null; } }
 
 async function showReview(j) {
   let d;
-  try { d = await api(`/api/jobs/${j.id}`); } catch (e) { toast(e.message, true); return; }
-  if (S.sel !== j.id) return;
+  try { d = await api(`/api/jobs/${j.id}`); } catch (e) { toast(e.message, true); S.shown = ""; return; }
+  if (S.sel !== j.id || (R && R.jobId === j.id && R.d.rev === d.rev && R.alive)) return;  // another call already built this
+  if (!d.src_exists) {
+    $("#main").innerHTML = `${head(j)}<div class="card" role="alert"><h3>The original video is missing</h3>
+      <p class="errtext">${esc(d.src)}</p><p class="desc">It was moved, renamed or deleted after it was added. Put it back at that path, or remove this video from the list and add it again from its new place. The cropped result is still here and can be exported.</p></div>`;
+    return;
+  }
   const V = d.video, total = V.duration;
-  const keepT = R && R.jobId === j.id ? R.cur() : 0;  // position survives a rebuild
+  const keepT = R && R.jobId === j.id ? R.cur() : lastPos.id === j.id ? lastPos.t : 0;  // position survives a rebuild
   $("#main").innerHTML = `${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
       <button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
     ${d.notice_text ? `<p class="notice" role="status">${esc(d.notice_text)} If it is not, click Change person.</p>` : ""}
@@ -640,7 +652,8 @@ async function showReview(j) {
   const vsrc = $("#vsrc"), vout = $("#vout"), ctx = vout.getContext("2d"), box = $("#box"), tl = $("#tl"), stripEl = $("#strip");
   const tlayer = $("#tilelayer"), tctx = tlayer.getContext("2d");
   const fa = $("#fa"), fb = $("#fb"), bx = $("#bx"), by = $("#by"), bw = $("#bw"), rect = $("#drawrect"), layer = $("#drawlayer");
-  R = { jobId: j.id, d, reviews: [], overrides: d.overrides.map(o => ({...o})), hist: [], redo: [], dirty: false, drawing: false, raf: 0, n: 0,
+  stopReview();  // never two live screens
+  R = { jobId: j.id, d, alive: true, reviews: [], overrides: d.overrides.map(o => ({...o})), hist: [], redo: [], dirty: false, drawing: false, raf: 0, n: 0,
         tiles: null, hover: null, hit: null, saveTimer: 0, saving: false, cur: () => vsrc.currentTime || 0 };
   const cur = R.cur;
   const segAt = t => { const sg = R.d.segments; let lo = 0, hi = sg.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (sg[m].start <= t + 1e-4) lo = m; else hi = m - 1; } return sg[lo]; };
@@ -703,12 +716,14 @@ async function showReview(j) {
   R.thumbCache = R.thumbCache || {};
   function loadThumbs() {
     const todo = [...document.querySelectorAll("#revlist canvas.thumb")];
+    const gen = R.thumbGen = (R.thumbGen || 0) + 1;  // a newer chain cancels this one
     const next = () => {
-      const c = todo.shift(); if (!c || !R || R.jobId !== j.id) return;
+      const c = todo.shift(); if (!c || !R || R.jobId !== j.id || R.thumbGen !== gen) return;
       const key = `${c.dataset.t}|${c.dataset.box}`;
       if (R.thumbCache[key]) { const img = new Image(); img.onload = () => { c.getContext("2d").drawImage(img, 0, 0); next(); }; img.src = R.thumbCache[key]; return; }
       const draw = () => {
         vthumb.removeEventListener("seeked", draw);
+        if (!R || R.thumbGen !== gen) return;
         const g = c.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, 192, 108);
         try {
           if (c.dataset.box) {
@@ -727,7 +742,7 @@ async function showReview(j) {
   }
   $("#revlist").addEventListener("click", e => {
     const ok = e.target.closest("[data-ok]"), thumb = e.target.closest("canvas.thumb");
-    if (ok) { const r = R.reviews[+ok.dataset.ok]; mutate(() => R.overrides.push({start: r.start, end: r.end, mode: "ok", fresh: true})); toast(`${fmt(r.start)} – ${fmt(r.end)} accepted. Ctrl+Z undoes it.`); return; }
+    if (ok) { const r = R.reviews[+ok.dataset.ok]; if (!R.overrides.some(x => x.mode === "ok" && Math.abs(x.start - r.start) < 1e-3 && Math.abs(x.end - r.end) < 1e-3)) mutate(() => R.overrides.push({start: r.start, end: r.end, mode: "ok", fresh: true})); toast(`${fmt(r.start)} – ${fmt(r.end)} accepted. Ctrl+Z undoes it.`); return; }
     if (thumb) { vsrc.pause(); seek(+thumb.dataset.t); return; }
     const fix = e.target.closest("[data-fix]"), go = e.target.closest(".jump");
     if (go) seek(Math.max(0, R.reviews[+go.dataset.i].start - 0.5));
@@ -772,7 +787,9 @@ async function showReview(j) {
       tl.setAttribute("aria-valuenow", t.toFixed(1)); tl.setAttribute("aria-valuetext", fmt(t));
       const jj = S.jobs.find(x => x.id === j.id), rs = $("#rstate");
       if (rs) rs.innerHTML = jj?.rendering ? `<dt>Preview file</dt><dd class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</dd>`
-        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `<dt>Preview file</dt><dd class="attn">waiting to re-export</dd>` : "";
+        : jj?.render_error ? `<dt>Preview file</dt><dd class="attn" title="${esc(jj.render_error)}">re-export failed (hover)</dd>`
+        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `<dt>Preview file</dt><dd class="attn">waiting to re-export</dd>`
+        : jj?.render?.audio === "dropped" ? `<dt>Audio</dt><dd class="attn">could not be kept</dd>` : "";
     }
     const e = R.boxDrag ? {box: R.boxDrag.box, manual: true} : effAt(t);
     if (!R.boxDrag) placeBox(e.box, e.manual);
@@ -802,7 +819,7 @@ async function showReview(j) {
     const [a, b] = targetSpan(), t = cur();
     const o = Object.assign({start: a, end: b}, what === null ? {box: null} : what.mode ? {mode: "hold"} : {box: what});
     mutate(() => {
-      const k = R.overrides.findIndex(x => x.fresh && t >= x.start && t < x.end && Math.abs(x.start - a) < 1e-3 && Math.abs(x.end - b) < 1e-3);
+      const k = R.overrides.findIndex(x => x.mode !== "ok" && Math.abs(x.start - a) < 1e-3 && Math.abs(x.end - b) < 1e-3);
       if (k >= 0) R.overrides[k] = {...o, fresh: true}; else R.overrides.push({...o, fresh: true});
     });
     setRange(a, b);
@@ -896,7 +913,8 @@ async function showReview(j) {
   $("#qClear").onclick = clearRange;
   const barTime = (el, e) => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(total, (e.clientX - r.left) / r.width * total)); };
   tl.addEventListener("pointerdown", e => { tl.setPointerCapture(e.pointerId); seek(barTime(tl, e)); });
-  tl.addEventListener("pointermove", e => { if (tl.hasPointerCapture(e.pointerId)) seek(barTime(tl, e)); });
+  let scrubT = null;
+  tl.addEventListener("pointermove", e => { if (!tl.hasPointerCapture(e.pointerId)) return; const first = scrubT === null; scrubT = barTime(tl, e); if (first) requestAnimationFrame(() => { seek(scrubT); scrubT = null; }); });
   let drag = null;  // {a: anchor time, edge: "l" | "r" | null}
   stripEl.addEventListener("pointerdown", e => {
     stripEl.setPointerCapture(e.pointerId); vsrc.pause();
@@ -906,7 +924,7 @@ async function showReview(j) {
   });
   stripEl.addEventListener("pointermove", e => { if (!drag) return; const t = barTime(stripEl, e); setRange(Math.min(drag.a, t), Math.max(drag.a, t)); seek(t); });
   stripEl.addEventListener("pointerup", e => { if (!drag) return; const t = barTime(stripEl, e); if (!drag.edge && Math.abs(t - drag.a) < 0.05) { const [a, b] = targetSpanAt(t); setRange(a, b); } drag = null; seek(+fa.value || t); });
-  const targetSpanAt = t => { const r = R.reviews.find(r => t >= r.start - 0.05 && t <= r.end + 0.05), s = segAt(t); return r ? [r.start, r.end] : [s.start, s.end]; };
+  const targetSpanAt = t => { const r = R.reviews.find(r => t >= r.start - 0.05 && t <= r.end + 0.05), s = segAt(t); return r ? [r.start, r.end] : s ? [s.start, s.end] : [Math.max(0, t - 0.5), Math.min(total, t + 0.5)]; };
   const jump = dir => { const t = cur(); const r = dir > 0 ? R.reviews.find(r => r.start > t + 0.3) : [...R.reviews].reverse().find(r => r.start < t - 0.8); if (r) seek(r.start); };
   $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
 
@@ -936,17 +954,26 @@ async function showReview(j) {
   async function saveNow() {
     clearTimeout(R.saveTimer);
     if (!R.dirty || R.saving) return;
-    R.saving = true; $("#saveNote").textContent = "saving…";
+    const me = R, sent = R.overrides.slice(), payload = sent.map(({fresh, ...o}) => o);
+    me.saving = true; $("#saveNote").textContent = "saving…";
+    let r;
     try {
-      const r = await api(`/api/jobs/${j.id}/overrides`, {json: {overrides: R.overrides.map(({fresh, ...o}) => o)}});
-      R.overrides.forEach(o => { o.fresh = false; });  // now part of the timeline the server returned
-      R.d.segments = r.segments; R.d.summary = r.summary;
-      R.dirty = false;
-      S.shown = `${j.id}|done|${r.rev}|false`;  // the poll must not rebuild the screen
-      renderMarks(); drawOvs();
-      $("#saveNote").textContent = "saved";
-    } finally { R.saving = false; }
-    if (R.dirty) scheduleSave();  // changed again while saving
+      r = await api(`/api/jobs/${j.id}/overrides`, {json: {overrides: payload}});
+    } catch (e) {
+      me.saving = false;
+      if (R === me) { $("#saveNote").textContent = "not saved (" + e.message + ")"; me.saveTimer = setTimeout(() => saveNow().catch(() => {}), 5000); }
+      return;
+    }
+    me.saving = false;
+    if (R !== me) return;  // the user moved to another video while this saved; its own screen will refetch
+    sent.forEach(o => { o.fresh = false; });  // these are in the timeline the server returned
+    R.d.segments = r.segments; R.d.summary = r.summary;
+    R.dirty = R.overrides.some(o => o.fresh) || R.overrides.length !== sent.length;  // changed again while saving?
+    j.reviewed = false; drawMark();
+    S.shown = `${j.id}|done|${r.rev}|false`;  // the poll must not rebuild the screen
+    renderMarks(); drawOvs();
+    $("#saveNote").textContent = R.dirty ? "unsaved" : "saved";
+    if (R.dirty) scheduleSave();
   }
   R.saveNow = saveNow;
   $("#qHold").onclick = () => { vsrc.pause(); setFix({mode: "hold"}); toast("This span keeps the box from just before it."); };
@@ -987,8 +1014,8 @@ async function showReview(j) {
 
   R.onKey = e => {
     if ($("#settings").open || $("#export").open) return;
-    if (e.key === "Escape") { if (R.drawing) { start = null; setDraw(false); } else clearRange(); return; }
     const tag = e.target.tagName, k = e.key.toLowerCase();
+    if (e.key === "Escape") { if (R.drawing) { start = null; setDraw(false); } else if (!/INPUT|SELECT|TEXTAREA/.test(tag)) clearRange(); return; }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "z" || k === "y") && !/INPUT|SELECT|TEXTAREA/.test(tag)) { e.preventDefault(); if (k === "z" && e.shiftKey || k === "y") redo(); else undo(); return; }
     if (/INPUT|SELECT|TEXTAREA/.test(tag) || e.ctrlKey || e.metaKey || e.altKey) return;
     const step = 1 / (V.fps || 25);

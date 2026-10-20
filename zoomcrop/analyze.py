@@ -1083,7 +1083,7 @@ class Analyzer:
 
         # 4. Name the chains: by label, by a remembered face, else by letter.
         dur = max(1e-6, samples[-1][0] - samples[0][0]) if samples else 1.0
-        step = {i: (samples[i + 1][0] - t if i + 1 < len(samples) else 0.0) for i, (t, _) in enumerate(samples)}
+        step = {i: (samples[i + 1][0] - t if i + 1 < len(samples) else self.sample_dt) for i, (t, _) in enumerate(samples)}
         for ch in chains:
             ch["share"] = sum(step[frame_of[id(o)]] for o in ch["views"] if id(o) in frame_of) / dur
             ch["vectors"] = [o.face for a in ch["members"] for o in faces[a]]
@@ -1300,7 +1300,7 @@ class Analyzer:
             for o in piece:
                 o.tid = nid
             out.append(nt)
-        tr.keep = [o for o in tr.keep if any(o is q for q in first)] or tr.keep
+        tr.keep = [o for o in tr.keep if any(o is q for q in first)] or first[::max(1, len(first) // 8)]
         tr.obs = first
         tr.pairs, tr.active = round(tr.pairs * len(first) / len(views)), round(tr.active * len(first) / len(views))
         return out

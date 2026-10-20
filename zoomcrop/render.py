@@ -51,14 +51,16 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
            crf: int = 20, inset: int = 2,
            progress: Callable[[float], None] | None = None,
            cancel: Callable[[], bool] | None = None) -> dict:
-    out_h = int(out_h) & ~1
+    out_h = int(out_h) & ~3  # the chroma planes below are addressed as out_h/4 rows of out_w: needs a multiple of 4
     out_w = int(round(out_h * 16 / 9)) & ~1
     dst = Path(dst)
     tmp = dst.with_name(dst.stem + ".part" + dst.suffix)
     inp = av.open(str(src))
     out = av.open(str(tmp), "w", options={"movflags": "faststart"})
-    info = {"audio": False, "frames": 0, "width": out_w, "height": out_h}
+    info = {"audio": "none", "frames": 0, "width": out_w, "height": out_h}
     try:
+        if not inp.streams.video:
+            raise ValueError("the file has no video stream")
         iv = inp.streams.video[0]
         iv.thread_type = "AUTO"
         W, H = iv.width, iv.height
@@ -75,9 +77,22 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
 
         ia = next((a for a in inp.streams.audio), None)
         oa = None
+        resampler = None
         if ia is not None and ia.codec_context.name in AUDIO_COPY_OK:
             oa = out.add_stream_from_template(ia)
-            info["audio"] = True
+            info["audio"] = "copied"
+        elif ia is not None:
+            # PCM (Mac screen recordings), FLAC, Vorbis...: not allowed in MP4, so re-encode
+            try:
+                rate = int(ia.codec_context.sample_rate or 48000)
+                oa = out.add_stream("aac", rate=rate)
+                layout = "stereo" if (ia.codec_context.channels or 2) >= 2 else "mono"
+                oa.codec_context.layout = layout
+                resampler = av.AudioResampler(format="fltp", layout=layout, rate=rate)
+                info["audio"] = "encoded"
+            except Exception:
+                oa = None
+                info["audio"] = "dropped"
         streams = [iv] + ([ia] if oa is not None else [])
 
         black = np.empty((out_h * 3 // 2, out_w), np.uint8)
@@ -89,6 +104,12 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
 
         for packet in inp.demux(streams):
             if packet.stream.type == "audio":
+                if resampler is not None:
+                    for af in packet.decode():
+                        for rf in resampler.resample(af):
+                            for p in oa.encode(rf):
+                                out.mux(p)
+                    continue
                 if packet.dts is None:
                     continue
                 packet.stream = oa
@@ -96,7 +117,9 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
                 continue
             for frame in packet.decode():
                 t = frame.time or 0.0
-                while si + 1 < len(segments) and t >= segments[si + 1]["start"] - 1e-6:
+                # sample times were rounded to 1e-4 s; without this slack the frame the change
+                # was found on would keep the old box and the switch land one frame late
+                while si + 1 < len(segments) and t >= segments[si + 1]["start"] - 1e-3:
                     si += 1
                 plan = plans[si] if segments else None
                 buf = black.copy()
@@ -128,6 +151,12 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
                         progress(min(1.0, t / duration))
         for p in ov.encode():
             out.mux(p)
+        if resampler is not None:
+            for rf in resampler.resample(None):
+                for p in oa.encode(rf):
+                    out.mux(p)
+            for p in oa.encode():
+                out.mux(p)
         out.close()
         inp.close()
         os.replace(tmp, dst)

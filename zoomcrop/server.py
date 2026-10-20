@@ -60,6 +60,19 @@ app = FastAPI(title="Zoom child crop")
 lock = threading.RLock()
 
 
+@app.middleware("http")
+async def same_origin_only(request: Request, call_next):
+    """Browsers send Origin on cross-site requests; a page from the internet must not be
+    able to add videos, change settings or open folder dialogs on this computer."""
+    origin = request.headers.get("origin")
+    if origin and request.method in ("POST", "PUT", "DELETE"):
+        host = origin.split("//", 1)[-1].split(":", 1)[0]
+        if host not in ("127.0.0.1", "localhost", "[::1]"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"detail": "Requests from other sites are not accepted."})
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
     """A bug in a request handler: keep the traceback (workspace/server.errors.log) and
@@ -98,6 +111,9 @@ def load_state():
     old = settings.pop("output_dir", None)
     if old and not settings.get("export_dir"):
         settings["export_dir"] = old
+    for d in (JOBDIR.iterdir() if JOBDIR.exists() else []):
+        if d.is_dir() and not (d / "job.json").exists():
+            shutil.rmtree(d, ignore_errors=True)  # removed earlier while a file in it was still open
     for f in sorted(JOBDIR.glob("*/job.json")):
         try:
             job = json.loads(f.read_text(encoding="utf-8"))
@@ -118,6 +134,8 @@ def load_state():
 
 
 def save_job(job: dict):
+    if job["id"] not in jobs:
+        return  # removed meanwhile: a worker finishing late must not bring the folder back
     d = JOBDIR / job["id"]
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "job.json.tmp"
@@ -336,6 +354,8 @@ def worker():
                 if res is None:
                     res = work.run(work.analyze_task, (job["src"], str(jdir), settings.get("known_faces") or []),
                                    progress, cancel.is_set)
+                    if cancel.is_set():
+                        continue  # removed while the analysis was finishing
                     cache_put(key, jdir)
                 save_faces(jid, res["faces"])
                 job["took"]["analyze"] = round(time.time() - t0, 1)
@@ -362,6 +382,8 @@ def worker():
                 out = jdir / f"child_r{job['rev'] + 1}.mp4"
                 info = work.run(work.render_task, (job["src"], str(out), segs, int(settings["out_height"])),
                                 progress, cancel.is_set)
+                if cancel.is_set():
+                    continue
                 job["took"]["render"] = round(time.time() - t0, 1)
                 for old in jdir.glob("child*.mp4"):
                     if old != out:
@@ -411,10 +433,19 @@ def worker():
         except Cancelled:
             pass
         except Exception as e:  # keep the worker alive; show the failure on the job
+            if cancel.is_set() or jid not in jobs:
+                continue  # removed meanwhile: nothing to report, nothing to write
             jdir.mkdir(parents=True, exist_ok=True)
             with open(jdir / "error.log", "a", encoding="utf-8") as f:
                 f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {task}, attempt {job.get('attempt', 0) + 1}\n{traceback.format_exc()}\n")
-            if job.get("attempt", 0) + 1 < MAX_ATTEMPTS and not cancel.is_set():
+            if task == "rerender":
+                # the reviewed result stays usable; the stale preview file is reported, not fatal
+                with lock:
+                    job["rendering"] = None
+                    job["render_error"] = f"{type(e).__name__}: {e}".splitlines()[-1][:200]
+                    save_job(job)
+                continue
+            if job.get("attempt", 0) + 1 < MAX_ATTEMPTS:
                 # a decoder hiccup or a file briefly locked by another program: once more
                 with lock:
                     enqueue(job, task, attempt=job.get("attempt", 0) + 1)
@@ -426,7 +457,7 @@ def worker():
 def public(job: dict) -> dict:
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "participants", "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev")
+            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     return out
@@ -467,9 +498,15 @@ async def upload(request: Request, name: str):
         raise HTTPException(400, f"Unsupported file type: {safe}")
     UPLOADS.mkdir(parents=True, exist_ok=True)
     dst = UPLOADS / f"{uuid.uuid4().hex[:6]}_{safe}"
-    with open(dst, "wb") as f:
-        async for chunk in request.stream():
-            f.write(chunk)
+    part = dst.with_name(dst.name + ".part")
+    try:
+        with open(part, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+        os.replace(part, dst)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
     return public(new_job(dst, "upload"))
 
 
@@ -495,6 +532,7 @@ def job_detail(jid: str):
     seg_file = JOBDIR / jid / "segments.json"
     out["segments"] = read_json(seg_file) if seg_file.exists() else []
     out["overrides"] = job["overrides"]
+    out["src_exists"] = Path(job["src"]).exists()
     out["flag_text"] = timeline.FLAG_TEXT
     out["notice_text"] = " ".join(timeline.NOTICE_TEXT.get(k, k) for k in (job.get("notice") or "").split())
     return out
@@ -509,6 +547,8 @@ async def choose_child(jid: str, request: Request):
         raise HTTPException(400, "unknown participant")
     if not (JOBDIR / jid / "analysis.json").exists():
         raise HTTPException(409, "analysis not finished")
+    if job["status"] not in ("choose", "done", "error") or job.get("rendering") or job.get("rerender_queued"):
+        raise HTTPException(409, "This video is still being processed; try again in a moment.")
     with lock:
         job["child_pid"] = pid
         job["notice"] = ""  # the user decided
@@ -552,15 +592,35 @@ async def set_overrides(jid: str, request: Request):
     body = await request.json()
     if job["status"] not in ("done", "error") or job["child_pid"] is None:
         raise HTTPException(409, "job is busy")
+    import math
+    dur = float((job.get("video") or {}).get("duration") or 0) or None
+    W, H = (job.get("video") or {}).get("width"), (job.get("video") or {}).get("height")
     clean = []
     for ov in body.get("overrides", []):
-        item = {"start": float(ov["start"]), "end": float(ov["end"])}
-        if item["end"] <= item["start"]:
-            continue
+        try:
+            a, b = float(ov["start"]), float(ov["end"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "A fix needs a start and an end time.")
+        if not (math.isfinite(a) and math.isfinite(b)):
+            raise HTTPException(400, "A fix needs finite start and end times.")
+        a = max(0.0, a)
+        if dur:
+            b = min(dur, b)
+        if b <= a:
+            continue  # entirely outside the video, or empty
+        item = {"start": round(a, 4), "end": round(b, 4)}
         if ov.get("mode") in ("hold", "ok"):
             item["mode"] = ov["mode"]
         elif ov.get("box"):
-            item["box"] = [int(round(float(v))) for v in ov["box"]]
+            try:
+                box = [int(round(float(v))) for v in ov["box"]]
+            except (TypeError, ValueError):
+                raise HTTPException(400, "A box needs four numbers.")
+            if len(box) != 4 or not all(math.isfinite(v) for v in box) or box[2] - box[0] < 8 or box[3] - box[1] < 8:
+                raise HTTPException(400, "A box needs a left, top, right and bottom edge, at least 8 px apart.")
+            if W and H and (min(W, box[2]) - max(0, box[0]) < 8 or min(H, box[3]) - max(0, box[1]) < 8):
+                raise HTTPException(400, f"That box ({box[0]},{box[1]} to {box[2]},{box[3]}) lies outside the picture ({W}×{H}).")
+            item["box"] = box
         else:
             item["box"] = None
         clean.append(item)
@@ -704,6 +764,8 @@ async def export(request: Request):
         raise HTTPException(400, f"Could not write to {dest}: {e.strerror or e}")
     with lock:
         for j in chosen:
+            if j["id"] not in jobs:
+                continue
             j["exported"] = {"dir": str(dest), "time": time.time(), "rev": j["rev"]}
             save_job(j)
         settings["export_dir"] = str(dest)
@@ -727,9 +789,9 @@ async def open_folder(request: Request):
 @app.post("/api/jobs/{jid}/retry")
 def retry(jid: str):
     job = get_job(jid)
-    if job["status"] in ("queued", "analyzing", "rendering"):
-        raise HTTPException(409, "job is busy")
     with lock:
+        if job["status"] in ("queued", "analyzing", "rendering") or job.get("rendering") or job.get("rerender_queued"):
+            raise HTTPException(409, "This video is still being processed; try again in a moment.")
         job["child_pid"] = None
         job["overrides"] = []
         job["notice"] = ""
@@ -746,6 +808,7 @@ def delete_job(jid: str):
         cancels[jid].set()
         jobs.pop(jid, None)
         job_faces.pop(jid, None)
+        proxy_locks.pop(jid, None)
     # Working files only: the analysis cache, the preview render and, for uploads, our
     # own copy. Source videos added by path and anything already exported are left alone.
     # job.json goes first, so that a folder whose video is still open in the player
@@ -805,6 +868,8 @@ async def source(jid: str):
     copy cannot be made."""
     job = get_job(jid)
     p = JOBDIR / jid / "source.mp4"
+    if not p.exists() and not Path(job["src"]).exists():
+        raise HTTPException(404, f"The original video is no longer at {job['src']}")
     if not p.exists():
         lk = proxy_locks.setdefault(jid, threading.Lock())
 
@@ -859,6 +924,8 @@ def make_strip(src: str, dst: Path):
 async def strip(jid: str):
     job = get_job(jid)
     f = JOBDIR / jid / "strip.jpg"
+    if not f.exists() and not Path(job["src"]).exists():
+        raise HTTPException(404, f"The original video is no longer at {job['src']}")
     if not f.exists():
         await asyncio.to_thread(make_strip, job["src"], f)
     if not f.exists():
@@ -888,7 +955,12 @@ async def update_settings(request: Request):
                         p["experimenter"] = False
                 save_job(job)
         if "out_height" in body:
-            settings["out_height"] = max(120, min(1080, int(body["out_height"]))) & ~1
+            settings["out_height"] = max(120, min(1080, int(body["out_height"]))) & ~3  # 4:2:0 planes need a multiple of 4
+            for job in jobs.values():
+                r = job.get("render") or {}
+                if job["status"] == "done" and r.get("height") not in (None, settings["out_height"]) and not job.get("rerender_queued"):
+                    job["rerender_queued"] = True
+                    tasks.put((job["id"], "rerender"))
         save_settings()
         # a new experimenter list may settle videos that were waiting for a choice
         for job in jobs.values():

@@ -250,7 +250,7 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
 
     for ov in overrides or []:
         if ov.get("mode") != "ok":  # "ok" = looked at and left as is; handled after the review pass
-            segs = _apply_override(segs, ov)
+            segs = _apply_override(segs, dict(ov, start=max(0.0, float(ov["start"])), end=min(duration, float(ov["end"]))))
 
     out = []
     for s in segs:
@@ -264,12 +264,13 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
     # was held or inferred makes no difference to anyone coding behaviour.
     i = 0
     while i < len(out):
-        doubtful = out[i]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[i]["flags"])
+        doubtful = "manual" not in out[i]["flags"] and (out[i]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[i]["flags"]))
         if not doubtful:
             i += 1
             continue
         j = i + 1
-        while j < len(out) and (out[j]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[j]["flags"])) \
+        while j < len(out) and "manual" not in out[j]["flags"] \
+                and (out[j]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[j]["flags"])) \
                 and out[j]["start"] - out[j - 1]["end"] < 0.3:
             j += 1
         run = out[i:j]
