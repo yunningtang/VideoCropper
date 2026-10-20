@@ -68,7 +68,11 @@ def decide(participants: list[dict], experimenters: list[str], child_hint: str =
     rest = [p for p in participants if not is_experimenter(p, experimenters)]
     # A "person" seen for a sliver of the video with no face is stray slide content or
     # a scrap of someone's window; a face makes even a brief appearance a real person.
-    major = [p for p in rest if p.get("share", 1.0) >= MIN_AUTO_SHARE or p.get("face")]
+    # And once faces were seen at all, a face-less "person" of any length is slide
+    # content that moves (animations, a video on the slide): it is still offered on the
+    # picker, but it does not count as a third person that forces the question.
+    any_face = any(p.get("face") for p in participants)
+    major = [p for p in rest if (p.get("share", 1.0) >= MIN_AUTO_SHARE or p.get("face")) and (p.get("face") or not any_face)]
     if len(major) != 1:
         return {"pid": None, "notice": ""}
     notice = []
