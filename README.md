@@ -50,7 +50,13 @@ Keyboard shortcuts in the review screen: Space play/pause, ← → 1 s (Shift: 5
 ## Batches of videos
 
 - Add them by path (paste the folder), not by dropping: dropped files are copied into the
-  workspace, pasted paths are read in place.
+  workspace, pasted paths are read in place. Either way the folder's name (B01, B02, ...)
+  is kept as the videos' batch: the browser can filter by it, the summary CSV has a column
+  for it, and Export… can write one subfolder per batch.
+- Manual fixes are saved at once and their preview files re-rendered in the background,
+  ahead of waiting analyses. Closing the console window and starting again later loses
+  nothing that was saved: queued videos resume, interrupted analyses start over, and
+  pending re-renders are picked up.
 - Register the experimenters first (name or face), or every video stops to ask who the
   child is.
 - Four videos run at a time, each in its own process. A video whose analysis fails is

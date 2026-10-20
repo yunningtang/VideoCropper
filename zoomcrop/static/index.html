@@ -330,6 +330,7 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
       <label class="mode"><input type="checkbox" id="eRep"> Full report <code>name_report.json</code></label>
       <label class="mode"><input type="checkbox" id="eSum" checked> Batch summary <code>crop_summary.csv</code> (one row per video)</label>
     </fieldset>
+    <label class="mode" id="eBatchRow" style="margin-top:10px"><input type="checkbox" id="eBatch" checked> One subfolder per batch (<span id="eBatchEg"></span>), as the videos were imported</label>
     <div class="actions"><button id="eCancel">Cancel</button><button class="primary" id="eGo">Export</button></div>
   </div>
   <div id="eDone" hidden>
@@ -1157,7 +1158,7 @@ async function pump() {
     try {
       await new Promise((ok, fail) => {
         const x = new XMLHttpRequest();
-        x.open("PUT", `/api/upload?name=${encodeURIComponent(u.name)}`);
+        x.open("PUT", `/api/upload?name=${encodeURIComponent(u.name)}&batch=${encodeURIComponent(u.batch || "")}`);
         x.upload.onprogress = e => { u.p = e.loaded / e.total; renderList(); };
         x.onload = () => x.status < 300 ? ok() : fail(new Error(JSON.parse(x.responseText || "{}").detail || x.statusText));
         x.onerror = () => fail(new Error("upload failed"));
@@ -1171,15 +1172,17 @@ async function pump() {
 function addFiles(files) {
   const all = [...files], vids = all.filter(f => VIDEO.test(f.name));
   if (!vids.length) return toast("No video files found. Supported: mp4, mov, m4v, mkv, avi, webm, wmv.", true);
-  vids.forEach(f => S.uploads.push({name: f.name, file: f, p: 0}));
+  // a dropped or picked folder names the batch (the file's parent folder, e.g. B06)
+  const batchOf = f => f.batch ?? ((f.webkitRelativePath || "").split("/").slice(-2, -1)[0] || "");
+  vids.forEach(f => S.uploads.push({name: f.name, file: f, p: 0, batch: batchOf(f)}));
   toast(`Added ${plural(vids.length, "video")}${all.length > vids.length ? `, skipped ${plural(all.length - vids.length, "other file")}` : ""}.`);
   S.filter = "all"; renderList(); pump();
 }
-async function walk(entry, out) {
-  if (entry.isFile) out.push(await new Promise((ok, no) => entry.file(ok, no)));
+async function walk(entry, out, folder = "") {
+  if (entry.isFile) { const f = await new Promise((ok, no) => entry.file(ok, no)); f.batch = folder; out.push(f); }
   else if (entry.isDirectory) {
     const rd = entry.createReader();
-    for (;;) { const batch = await new Promise((ok, no) => rd.readEntries(ok, no)); if (!batch.length) break; for (const e of batch) await walk(e, out); }
+    for (;;) { const batch = await new Promise((ok, no) => rd.readEntries(ok, no)); if (!batch.length) break; for (const e of batch) await walk(e, out, entry.name); }
   }
 }
 const drop = $("#drop");
@@ -1227,6 +1230,9 @@ function openExport(currentId) {
     ${k === pre ? "checked" : ""} ${list.length ? "" : "disabled"}> ${esc(label)}${k === "one" ? "" : ` <span>(${list.length})</span>`}</label>`).join("");
   exportIds = () => groups.find(g => g[0] === $("input[name=escope]:checked")?.value)?.[2].map(j => j.id) || [];
   if (!$("#eDir").value) $("#eDir").value = S.settings.export_dir || "";
+  const batches = [...new Set(done.map(j => j.batch).filter(Boolean))].sort();
+  $("#eBatchRow").hidden = !batches.length;
+  $("#eBatchEg").textContent = batches.slice(0, 3).join("/, ") + "/" + (batches.length > 3 ? ", …" : "");
   $("#eErr").textContent = ""; $("#eForm").hidden = false; $("#eDone").hidden = true;
   $("#export").showModal();
 }
@@ -1241,7 +1247,7 @@ $("#eGo").onclick = () => busy($("#eGo"), async () => {
   const ids = exportIds();
   if (!ids.length) return err("There is nothing to export in that group yet.");
   if (!$("#eDir").value.trim()) { $("#eDir").focus(); return err("Choose where to save: click Browse, or type a folder path."); }
-  const req = {ids, dest: $("#eDir").value, include: {video: $("#eVideo").checked, segments: $("#eSeg").checked, report: $("#eRep").checked, summary: $("#eSum").checked}};
+  const req = {ids, dest: $("#eDir").value, include: {video: $("#eVideo").checked, segments: $("#eSeg").checked, report: $("#eRep").checked, summary: $("#eSum").checked}, by_batch: !$("#eBatchRow").hidden && $("#eBatch").checked};
   try {
     let r = await api("/api/export", {json: req});
     if (r.conflicts) {

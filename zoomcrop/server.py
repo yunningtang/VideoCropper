@@ -88,7 +88,22 @@ async def unhandled(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 jobs: dict[str, dict] = {}
 cancels: dict[str, threading.Event] = {}
-tasks: queue.Queue = queue.Queue()
+class TaskQueue(queue.PriorityQueue):
+    """Renders (a fix's preview file, a chosen child's first output) go before analyses,
+    so a manual fix does not wait behind a batch of long analyses; otherwise first in, first out."""
+    _n = 0
+
+    def put(self, item, block=True, timeout=None):
+        jid, task = item
+        TaskQueue._n += 1
+        super().put((0 if task in ("render", "rerender") else 1, TaskQueue._n, jid, task), block, timeout)
+
+    def get(self, block=True, timeout=None):
+        _, _, jid, task = super().get(block, timeout)
+        return jid, task
+
+
+tasks: queue.Queue = TaskQueue()
 settings: dict = dict(DEFAULT_SETTINGS)
 # Face descriptions of the people in each analysed video, by participant id. They sit in
 # the job's folder (faces.json) until the child is chosen, so that an experimenter can
@@ -518,8 +533,9 @@ def state():
 
 
 @app.put("/api/upload")
-async def upload(request: Request, name: str):
+async def upload(request: Request, name: str, batch: str = ""):
     safe = Path(name).name
+    batch = "".join(ch for ch in Path(batch).name.strip() if ch not in '\\/:*?"<>|')[:40]
     if Path(safe).suffix.lower() not in VIDEO_EXT:
         raise HTTPException(400, f"Unsupported file type: {safe}")
     UPLOADS.mkdir(parents=True, exist_ok=True)
@@ -533,7 +549,7 @@ async def upload(request: Request, name: str):
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    return public(new_job(dst, "upload"))
+    return public(new_job(dst, "upload", batch))
 
 
 @app.post("/api/add_path")
@@ -786,26 +802,29 @@ async def export(request: Request):
     plan: list[tuple[dict, str, Path]] = []
     stems: dict[str, int] = {}
     rows = []
-    for j in sorted(chosen, key=lambda j: (j.get("label") or j["name"])):
+    by_batch = bool(body.get("by_batch"))  # B01/, B02/, ... under the chosen folder
+    for j in sorted(chosen, key=lambda j: (j.get("batch", ""), j.get("label") or j["name"])):
         stem = j.get("label") or Path(j["name"]).stem
         stems[stem] = stems.get(stem, 0) + 1
         if stems[stem] > 1:  # two sources with the same file name
             stem = f"{stem}_{stems[stem]}"
+        folder = dest / j["batch"] if by_batch and j.get("batch") else dest
         rows.append((j, f"{stem}_child.mp4"))
         if want.get("video"):
-            plan.append((j, "video", dest / f"{stem}_child.mp4"))
+            plan.append((j, "video", folder / f"{stem}_child.mp4"))
         if want.get("segments"):
-            plan.append((j, "segments", dest / f"{stem}_segments.csv"))
+            plan.append((j, "segments", folder / f"{stem}_segments.csv"))
         if want.get("report"):
-            plan.append((j, "report", dest / f"{stem}_report.json"))
+            plan.append((j, "report", folder / f"{stem}_report.json"))
     targets = [t for _, _, t in plan] + ([dest / "crop_summary.csv"] if want.get("summary") else [])
-    existing = [t.name for t in targets if t.exists()]
+    existing = [str(t.relative_to(dest)) for t in targets if t.exists()]
     if existing and not body.get("overwrite"):
         return {"conflicts": existing[:8], "n_conflicts": len(existing)}
 
     def run():
         dest.mkdir(parents=True, exist_ok=True)
         for j, kind, target in plan:
+            target.parent.mkdir(parents=True, exist_ok=True)
             segs = read_json(JOBDIR / j["id"] / "segments.json")
             if kind == "video":
                 # results made by older versions already sit in their folder under this name
