@@ -460,12 +460,17 @@ def worker():
                 set_status(job, "error", error=f"{type(e).__name__}: {e}")
 
 
-def public(job: dict) -> dict:
+def public(job: dict, full: bool = False) -> dict:
+    """What the page sees. The list polled every second carries the participants only
+    for a video waiting for a choice (the picker needs them); the job detail has
+    everything, so that 400 queued videos do not make every poll megabytes."""
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
-            "participants", "video", "summary", "rev", "took", "created", "src",
+            "video", "summary", "rev", "took", "created", "src",
             "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
+    if full or job["status"] == "choose":
+        out["participants"] = job.get("participants")
     return out
 
 
@@ -534,7 +539,7 @@ async def add_path(request: Request):
 @app.get("/api/jobs/{jid}")
 def job_detail(jid: str):
     job = get_job(jid)
-    out = public(job)
+    out = public(job, full=True)
     seg_file = JOBDIR / jid / "segments.json"
     out["segments"] = read_json(seg_file) if seg_file.exists() else []
     out["overrides"] = job["overrides"]

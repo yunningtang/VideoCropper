@@ -503,7 +503,11 @@ function showError(j) {
     <button class="primary" data-act="retry">Try again</button></div>`;
 }
 let choosing = { changing: false };
-function showChoose(j) {
+async function showChoose(j) {
+  if (!j.participants) {  // the list carries participants only for videos waiting for a choice
+    try { const d = await api(`/api/jobs/${j.id}`); j.participants = d.participants; } catch (e) { toast(e.message, true); S.shown = ""; return; }
+    if (S.sel !== j.id) return;
+  }
   const ps = j.participants || [];
   // "changing" = this video already has a result and the user wants someone else
   const changing = choosing.changing = S.picking && j.status !== "choose";
