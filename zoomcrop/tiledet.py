@@ -119,7 +119,7 @@ def merge(learned: list[Tile], geometric: list[Tile]) -> list[Tile]:
         twin = max((g for g in geometric if iou(g.box, tl.box) >= TWIN_IOU and g.score >= 0.6 and twin_of(g, tl)),
                    key=lambda g: iou(g.box, tl.box), default=None)
         if twin is not None:
-            out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut))
+            out.append(Tile(twin.x0, twin.y0, twin.x1, twin.y1, max(twin.score, tl.score), twin.clip or tl.clip, twin.cut, src="both"))
             used.add(id(twin))
         else:
             out.append(tl)

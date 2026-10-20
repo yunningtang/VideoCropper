@@ -57,9 +57,9 @@ Keyboard shortcuts in the review screen: Space play/pause, ← → 1 s (Shift: 5
   retried once, then marked Failed with the reason in its `error.log`; the others carry
   on. Analysis results are cached by video content (`workspace/cache`), so a video that
   is removed and added again, or re-added after a restart, is not analysed twice.
-- With a graphics card and `onnxruntime-directml` installed (see `requirements.txt`),
-  the tile model runs on the GPU and analysis is roughly twice as fast. Without it,
-  everything runs on the CPU.
+- With a graphics card, run `tools\gpu.bat` once: the tile model then runs on the GPU
+  and analysis is roughly twice as fast. Without it, everything runs on the CPU. Run it
+  again after any `pip install -r requirements.txt` (that puts the CPU build back).
 - `server.log` records when the server started, a heartbeat every minute, and why it
   stopped (window closed, Ctrl+C, logoff); a log that just stops means the process was
   killed from outside.

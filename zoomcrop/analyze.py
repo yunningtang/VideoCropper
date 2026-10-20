@@ -68,6 +68,7 @@ MAX_TILES = 24       # candidate boxes kept per frame (busy slides yield dozens 
 OCR_MIN_W = 0.1      # a box narrower than this share of the frame is not a video tile worth reading
 MIN_SHARE = 0.03     # a person must be on screen this share of the video to be listed
 MIN_SHARE_NOFACE = 0.15  # ... and more when no face was ever seen in it while others showed one
+LEARNED_SHARE = 0.3  # a face-less chain counts as a person only if the learned finder saw it this often
 
 
 class Cancelled(Exception):
@@ -112,6 +113,7 @@ class Obs:
     cut: int | None = None           # bottom of the visible part when the panel edge hides the rest
     face: np.ndarray | None = None   # SFace feature of the largest face in the tile, when one was looked for
     face_q: float = 0.0              # how good that face was (detector confidence x size); -1 = none found
+    learned: bool = False            # the learned tile finder saw a camera picture here (not only the geometric one)
 
 
 @dataclass
@@ -605,7 +607,7 @@ class Analyzer:
                 rows = int((tl.cut - tl.y0) / max(1, tl.h) * THUMB_H)
                 mask[rows:] = False
                 thumb[rows:] = 0
-            o = Obs(tl.box, tl.score, tl.clip, thumb, mask, _is_flat(gray, tl.box), t=t, cut=tl.cut)
+            o = Obs(tl.box, tl.score, tl.clip, thumb, mask, _is_flat(gray, tl.box), t=t, cut=tl.cut, learned=tl.src in ("model", "both"))
             o.hidden = tl.y1 > H or tl.x0 < 0 or tl.cut is not None
             if not o.hidden:
                 p = next((q for q in prev if q.name and _same_box(q.box, tl.box, self.tol)), None)
@@ -1076,7 +1078,11 @@ class Analyzer:
             for a in members:
                 nm.update(names[a])
             views = [o for a in members for o in by_id[a].obs]
-            if (live and settled) or n_face >= 2:
+            # A chain with no face has to be a camera picture in the learned finder's eyes
+            # too: slide content that moves (a reveal animation, a video on the slide) is
+            # "live" to the pixels but never looks like a camera tile to the model.
+            seen = self.tiledet is None or sum(1 for o in views if o.learned) >= LEARNED_SHARE * len(views)
+            if (live and settled and (seen or n_face)) or n_face >= 2:
                 chains.append({"members": members, "live": live, "faces": n_face, "names": nm, "views": views})
                 for a in members:
                     by_id[a].chain = len(chains) - 1

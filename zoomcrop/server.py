@@ -798,7 +798,7 @@ def retry(jid: str):
         if job["status"] in ("queued", "analyzing", "rendering") or job.get("rendering") or job.get("rerender_queued"):
             raise HTTPException(409, "This video is still being processed; try again in a moment.")
         job["child_pid"] = None
-        job["overrides"] = []
+        # manual fixes are kept: they are spans and boxes, not tied to the analysis
         job["notice"] = ""
         job["fresh"] = True  # the user asked for a new analysis: do not serve the cached one
         enqueue(job, "analyze")

@@ -528,11 +528,11 @@ function showChoose(j) {
     ${faces.map(f => `<li>${esc(f.name)} <span class="muted">(by face)</span><button class="ghost danger" data-unface="${esc(f.name)}" aria-label="Forget ${esc(f.name)}'s face" title="Forget this face">×</button></li>`).join("")}</ul></div>`;
   // people with no label but a visible face can be remembered by face; the name links the
   // face to the experimenter list (registered names are offered, any other name works too)
-  const faceable = byLook.filter(p => p.face && !p.experimenter);
+  const faceable = byLook.filter(p => p.face && !p.experimenter && !(changing && p.id === j.child_pid));  // never the child
   const names = [...new Set([...staff, ...faces.map(f => f.name)])];
-  const faceBox = !changing && faceable.length && ps.length > 1 ? `<div class="facebox"><p>Remember the other person by face, so later videos with them do not ask:</p>
+  const faceBox = faceable.length && ps.length > 1 ? `<div class="facebox"><p>Remember the other person by face, so later videos with them do not ask:</p>
     <datalist id="staffnames">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-    ${faceable.map(p => `<label class="check faceopt" data-fpid="${p.id}"><input type="checkbox" class="faceck" ${faceable.length === 1 && ps.length === 2 ? "checked" : ""}> ${esc(p.name)} as experimenter named <input type="text" class="facename" list="staffnames" placeholder="${names.length ? "pick a name or type one" : "e.g. Sam"}" value="${names.length === 1 ? esc(names[0]) : ""}" maxlength="40"></label>`).join("")}
+    ${faceable.map(p => `<label class="check faceopt" data-fpid="${p.id}"><input type="checkbox" class="faceck" ${faceable.length === 1 && ps.length === 2 ? "checked" : ""}> ${esc(p.name)} as experimenter named <input type="text" class="facename" list="staffnames" placeholder="${names.length ? "pick a name or type one" : "e.g. Sam"}" maxlength="40"></label>`).join("")}
     <p class="muted">Only the face description (a list of numbers) is kept, never the picture, and never for the person you crop.</p></div>` : "";
   const noNames = byLook.length && !named.length ? " This recording shows no name labels, so people were told apart by how their tile looks; some cards may be slide content rather than a person." : "";
   const body = ps.length ? `<p class="desc">${changing ? "Pick a different person for this video. This does not change who is remembered as an experimenter."
@@ -574,7 +574,7 @@ $("#main").addEventListener("click", e => {
     await poll(); S.shown = ""; refreshMain();
   });
   else if (act === "retry") {
-    if (j.n_overrides && !confirm(`Re-analyzing discards the ${plural(j.n_overrides, "manual fix", "manual fixes")} on this video. Continue?`)) return;
+    if (!confirm(`Re-analyze "${j.name}" from scratch? Your manual fixes are kept; you may be asked to pick the child again.`)) return;
     busy(b, async () => { await api(`/api/jobs/${j.id}/retry`, {method: "POST"}); if (R) R.dirty = false; await poll(); });
   } else if (act === "delete") {
     const lose = j.status === "done" && exportState(j) !== "current" ? "\nIts cropped result has not been exported (or changed since) and will be discarded." : "";
