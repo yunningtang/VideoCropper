@@ -160,8 +160,9 @@ def read_json(path: Path):
 
 
 # -- jobs ------------------------------------------------------------------
-def new_job(src: Path, origin: str) -> dict:
+def new_job(src: Path, origin: str, batch: str = "") -> dict:
     job = {
+        "batch": batch,
         "id": uuid.uuid4().hex[:10], "name": src.name if origin == "path" else src.name.split("_", 1)[1],
         "label": "", "src": str(src), "origin": origin, "status": "queued", "progress": 0.0, "error": "",
         "created": time.time(), "child_pid": None, "child_name": "", "participants": [],
@@ -480,7 +481,7 @@ def public(job: dict, full: bool = False) -> dict:
     everything, so that 400 queued videos do not make every poll megabytes."""
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error", "label")
+            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error", "label", "batch")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     if full or job["status"] == "choose":
@@ -546,7 +547,9 @@ async def add_path(request: Request):
     if not files:
         raise HTTPException(400, "No video files found at that path")
     known = {j["src"] for j in jobs.values()}
-    added = [public(new_job(f, "path")) for f in files if str(f) not in known]
+    # videos added from a folder keep its name as their batch (B01, B02, ...)
+    batch = p.name if p.is_dir() else ""
+    added = [public(new_job(f, "path", batch)) for f in files if str(f) not in known]
     return {"added": added, "skipped": len(files) - len(added)}
 
 
@@ -691,7 +694,7 @@ async def clone_job(jid: str, request: Request):
     if job["status"] not in ("done", "choose") or not (jdir / "analysis.json").exists():
         raise HTTPException(409, "Finish this video's analysis first.")
     new = {
-        "id": uuid.uuid4().hex[:10], "name": job["name"], "label": str(body.get("label", "")).strip()[:60],
+        "id": uuid.uuid4().hex[:10], "name": job["name"], "label": str(body.get("label", "")).strip()[:60], "batch": job.get("batch", ""),
         "src": job["src"], "origin": "clone", "status": "choose", "progress": 1.0, "error": "",
         "created": time.time(), "child_pid": None, "child_name": "", "participants": json.loads(json.dumps(job["participants"])),
         "video": job["video"], "summary": None, "output": "", "overrides": [], "rev": 0, "took": dict(job.get("took") or {}),
@@ -728,11 +731,11 @@ def summary_text(rows: list[tuple[dict, str]]) -> str:
     """One row per video, for keeping track of a batch (opens in Excel)."""
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["participant", "video", "cropped_person", "duration_s", "visible_pct", "missing_s", "review_spans",
+    w.writerow(["batch", "participant", "video", "cropped_person", "duration_s", "visible_pct", "missing_s", "review_spans",
                 "review_s", "window_changes", "manual_fixes", "reviewed", "exported_file"])
     for j, fname in rows:
         sm = j.get("summary") or {}
-        w.writerow([j.get("label") or Path(j["name"]).stem, j["name"], j.get("child_name", ""), sm.get("duration", ""), sm.get("visible_pct", ""),
+        w.writerow([j.get("batch", ""), j.get("label") or Path(j["name"]).stem, j["name"], j.get("child_name", ""), sm.get("duration", ""), sm.get("visible_pct", ""),
                     sm.get("missing_s", ""), sm.get("review_n", ""), sm.get("review_s", ""),
                     sm.get("layout_changes", ""), len(j.get("overrides") or []),
                     "yes" if j.get("reviewed") else "no", fname])
