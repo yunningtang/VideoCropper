@@ -8,22 +8,13 @@
 /* Semantic colour tokens. Text colours are checked for 4.5:1 on their backgrounds;
    the *-fill colours are for shapes (timeline blocks, bars), which need 3:1. */
 :root {
-  --bg: #f4f5f7; --panel: #ffffff; --line: #d9dee6; --text: #1c2330; --muted: #566070;
-  --accent: #2a56c6; --on-accent: #ffffff; --accent-soft: #e6edfc;
-  --ok: #1f7a50; --warn: #8a5200; --bad: #b3261e; --manual: #5a3fc0;
-  --ok-soft: #e2f4ea; --warn-soft: #fdeccb; --bad-soft: #fde3e1;
-  --ok-fill: #3fae7c; --warn-fill: #e09a2b; --bad-fill: #d14b4b; --bad-fill2: #8f2a2a; --manual-fill: #7a5ad6;
-  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 16px rgba(20, 30, 50, .05);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171c; --panel: #1d2128; --line: #343b47; --text: #e6e9ee; --muted: #a3acba;
-    --accent: #8fb0ff; --on-accent: #0f1524; --accent-soft: #232c44;
-    --ok: #63d3a2; --warn: #f0b65a; --bad: #f58f8a; --manual: #b6a3f5;
-    --ok-soft: #173326; --warn-soft: #3a2c10; --bad-soft: #3d1c1b;
-    --ok-fill: #46b985; --warn-fill: #e3a341; --bad-fill: #ea6b6b; --bad-fill2: #7d2f2f; --manual-fill: #a48cf0;
-    --shadow: none;
-  }
+  --bg: #141416; --panel: #1f1f23; --line: #303036; --text: #e9e9ec; --muted: #9a9aa3;
+  --accent: #3dd9c3; --on-accent: #0b1f1c; --accent-soft: #163b36;
+  --ok: #63d3a2; --warn: #f0b65a; --bad: #f58f8a; --manual: #b6a3f5;
+  --ok-soft: #173326; --warn-soft: #3a2c10; --bad-soft: #3d1c1b;
+  --ok-fill: #46b985; --warn-fill: #e3a341; --bad-fill: #ea6b6b; --bad-fill2: #7d2f2f; --manual-fill: #a48cf0;
+  --shadow: none;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -251,6 +242,56 @@ dialog .mode span { color: var(--muted); }
 .errtext { color: var(--bad); white-space: pre-wrap; overflow-wrap: anywhere; }
 code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+/* ---------- editor look (dark, timeline at the bottom, properties on the right) ---------- */
+.editor { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.ed-viewers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.viewer { min-width: 0; }
+.vlabel { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.vlabel .vhint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cfd3da; background: rgba(0,0,0,.6); font-size: 13px; pointer-events: none; }
+.loading[hidden] { display: none; }
+.ed-bar { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.ed-bar .time { font-variant-numeric: tabular-nums; min-width: 118px; text-align: center; }
+.ed-bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.ed-bar .tog { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.ed-bar .fact { font-size: 12.5px; color: var(--muted); } .ed-bar .fact b { color: var(--text); font-variant-numeric: tabular-nums; } .ed-bar .fact b.attn { color: var(--warn); }
+.ed-bar .zoom { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); } .ed-bar .zoom input { width: 110px; accent-color: var(--accent); }
+.ed-main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+@container (max-width: 980px) { .ed-main { grid-template-columns: 1fr; } .ed-viewers { grid-template-columns: 1fr; } }
+.ed-tl { position: relative; overflow-x: auto; overflow-y: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; user-select: none; touch-action: none; }
+.ed-tl:focus-visible { outline: 2px solid var(--accent); }
+#tlinner { position: relative; width: 100%; min-width: 100%; }
+.ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: pointer; overflow: hidden; }
+.ruler i { position: absolute; bottom: 0; width: 1px; background: var(--muted); }
+.ruler i.maj { height: 10px; } .ruler i.min { height: 5px; opacity: .6; }
+.ruler i b { position: absolute; left: 4px; bottom: 8px; font: 10.5px/1 "Segoe UI", system-ui, sans-serif; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.track { position: relative; border-bottom: 1px solid var(--line); }
+.track .tlabel { position: absolute; left: 6px; top: 3px; z-index: 2; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,.55); pointer-events: none; text-shadow: 0 1px 2px #000; }
+.track.strip { height: 48px; margin: 0; border-radius: 0; background-size: 100% 100%; background-repeat: no-repeat; background-color: #0e0e10; cursor: col-resize; }
+.track.crop { height: 30px; background: #0e0e10; cursor: pointer; }
+.track.crop .seg { position: absolute; bottom: 0; min-width: 2px; height: 100%; }
+.track.crop .seg.ok { height: 55%; background: var(--ok-fill); }
+.track.crop .seg.warn { background: var(--warn-fill); }
+.track.crop .seg.miss { background: repeating-linear-gradient(45deg, var(--bad-fill) 0 4px, var(--bad-fill2) 4px 8px); }
+.track.crop .seg.manual { background: var(--manual-fill); border-top: 3px solid #fff; }
+.track.fixes { height: 24px; background: #121214; }
+.track.fixes .clip { position: absolute; top: 5px; bottom: 5px; min-width: 3px; background: var(--manual-fill); border-radius: 3px; cursor: pointer; opacity: .95; }
+.track.fixes .clip.okc { background: var(--ok-fill); }
+.track.fixes .clip.fresh { outline: 1px dashed #fff; }
+.track.fixes .clip:hover { filter: brightness(1.2); }
+#head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 3; transform: translateX(-1px); }
+#head i { position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top: 9px solid var(--accent); }
+#range { position: absolute; top: 22px; bottom: 0; background: rgba(61, 217, 195, .12); border-inline: 2px solid var(--accent); pointer-events: none; display: none; z-index: 2; }
+#range2 { position: absolute; top: 0; bottom: 0; pointer-events: none; display: none; }
+#range2 .rh { position: absolute; top: 0; bottom: 0; width: 10px; pointer-events: auto; cursor: ew-resize; }
+#range2 .rh.l { left: -6px; } #range2 .rh.r { right: -6px; }
+.ed-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; max-height: 70vh; overflow: auto; }
+.pane { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.pane h3 { margin: 0 0 4px; font-size: 14px; } .pane .desc { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+.ed-side .cards { grid-template-columns: 1fr 1fr; max-height: none; }
+.ed-side .keys { margin: 0 4px; font-size: 12px; }
+.ed-side .keys kbd { margin-right: 2px; }
 </style>
 </head>
 <body>
@@ -576,85 +617,80 @@ async function showReview(j) {
   }
   const V = d.video, total = V.duration;
   const keepT = R && R.jobId === j.id ? R.cur() : lastPos.id === j.id ? lastPos.t : 0;  // position survives a rebuild
-  $("#main").innerHTML = `${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
+  $("#main").innerHTML = `<div class="editor">
+    ${head(j, `<span class="who">Cropping <b>${esc(d.child_name || "manual area")}</b></span>
       <button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
     ${d.notice_text ? `<p class="notice" role="status">${esc(d.notice_text)} If it is not, click Change person.</p>` : ""}
-    <dl class="facts">
-      <div><dt>Length</dt><dd>${fmt(total)}</dd></div>
-      <div><dt>Child visible</dt><dd id="fVis"></dd></div>
-      <div><dt>Window moves / resizes</dt><dd id="fMoves"></dd></div>
-      <div><dt>To check</dt><dd id="fCheck"></dd></div>
-      <div><dt>Exported</dt><dd class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
-        exportState(d) === "none" ? "not yet" : exportState(d) === "stale" ? "yes, but changed since" : `to ${esc(d.exported.dir)}`}</dd></div>
-      <div id="rstate"></div>
-    </dl>
     <video id="vthumb" muted preload="auto" src="/api/jobs/${j.id}/source" hidden aria-hidden="true"></video>
-    <div class="players">
-      <figure><figcaption><span>Original · drag the red box or its corners to fix it · hover to pick a detected tile</span></figcaption>
+    <div class="ed-viewers">
+      <div class="viewer"><div class="vlabel"><span>Original</span><span class="vhint">drag the red box or a corner · click a dotted tile to take it</span></div>
         <div class="stage" id="stage" style="aspect-ratio:${V.width}/${V.height}">
           <video id="vsrc" playsinline preload="auto" aria-label="Original recording" src="/api/jobs/${j.id}/source"></video>
           <canvas id="tilelayer"></canvas>
           <div id="box"><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
-          <div id="drawrect"></div><div id="drawlayer"></div></div></figure>
-      <figure><figcaption><span>Cropped result (live preview)</span><span id="saveNote"></span></figcaption>
+          <div id="drawrect"></div><div id="drawlayer"></div><div class="loading" id="loading">Preparing playback…</div></div></div>
+      <div class="viewer"><div class="vlabel"><span>Crop</span><span class="vhint" id="saveNote"></span></div>
         <div class="stage" style="aspect-ratio:16/9">
           <canvas id="vout" width="640" height="360" aria-label="Cropped result"></canvas>
-          <div class="nochild" id="nochild">The child is not on screen in this span</div></div></figure>
+          <div class="nochild" id="nochild">No child in this span</div></div></div>
     </div>
-    <div class="transport">
-      <button id="play" class="primary">Play</button>
+    <div class="ed-bar">
+      <button id="play" class="primary" title="Space">Play</button>
+      <button id="stepB" class="ghost" title="One frame back (,)">&#9664;|</button><button id="stepF" class="ghost" title="One frame forward (.)">|&#9654;</button>
       <span class="time"><span id="cur">0:00.0</span> / ${fmt(total)}</span>
-      <label class="sr" for="rate">Playback speed</label>
-      <select id="rate"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
-      <button id="prevFlag">Previous</button><button id="nextFlag">Next</button>
-      <label><input type="checkbox" id="only"> Play only the spans to check</label>
-      <span class="spacer"></span>
+      <select id="rate" title="Speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      <span class="sep"></span>
+      <button id="prevFlag" title="Previous span to check (P)">&#9664; Check</button><button id="nextFlag" title="Next span to check (N)">Check &#9654;</button>
+      <label class="tog"><input type="checkbox" id="only"> only spans to check</label>
+      <span class="sep"></span>
       <button id="undo" class="ghost" title="Undo (Ctrl+Z)">Undo</button><button id="redo" class="ghost" title="Redo (Ctrl+Y)">Redo</button>
+      <span class="spacer"></span>
+      <span class="fact">Visible <b id="fVis"></b></span><span class="fact">To check <b id="fCheck"></b></span><span class="fact" id="rstate"></span>
+      <span class="fact">Exported <b class="${exportState(d) === "stale" ? "attn" : ""}" title="${esc(d.exported?.dir || "")}">${
+        exportState(d) === "none" ? "no" : exportState(d) === "stale" ? "changed since" : "yes"}</b></span>
+      <label class="zoom" title="Timeline zoom (Ctrl + wheel over the timeline)">&#128269; <input type="range" id="zoom" min="1" max="24" step="0.5" value="1"></label>
     </div>
-    <div class="timeline" id="tl" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
-      <div id="segs"></div><div id="range"></div><div id="head"></div></div>
-    <div class="strip" id="strip" title="Drag here to select a span; drag its edges to adjust" style="background-image:url(/api/jobs/${j.id}/strip)">
-      <div id="range2"><i class="rh l"></i><i class="rh r"></i></div><div id="head2"></div></div>
-    <div class="legend" aria-hidden="true">
-      <span><i><b style="height:50%;background:var(--ok-fill)"></b></i>Normal (low block)</span>
-      <span><i><b style="height:100%;background:var(--warn-fill)"></b></i>Check this (tall block)</span>
-      <span><i><b style="height:100%;background:repeating-linear-gradient(45deg,var(--bad-fill) 0 3px,var(--bad-fill2) 3px 6px)"></b></i>Child not on screen (hatched)</span>
-      <span><i><b style="height:100%;background:var(--manual-fill);border-top:3px solid var(--text)"></b></i>Set by hand (top line)</span></div>
-    <p class="keys"><span><kbd>Space</kbd> play / pause</span><span><kbd>←</kbd> <kbd>→</kbd> 1 s (with <kbd>Shift</kbd> 5 s)</span>
-      <span><kbd>,</kbd> <kbd>.</kbd> one frame</span><span><kbd>P</kbd> <kbd>N</kbd> previous / next span to check</span>
-      <span><kbd>I</kbd> <kbd>O</kbd> span start / end at the playhead</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> undo / redo</span></p>
-    <div class="cols">
-      <section class="card" aria-labelledby="hRev"><h3 id="hRev">Spans to check</h3>
-        <p class="desc">Click a time to look. To fix it: pause there, then click the right tile on the original, or drag the red box into place. The fix covers the marked span and saves itself.</p>
-        <div id="revlist"></div></section>
-      <section class="card" aria-labelledby="hFix" id="fixcard"><h3 id="hFix">Fixes</h3>
-        <p class="desc">A fix applies to the span marked on the timeline (blue), or to the span under the playhead when none is marked. Everything saves on its own; the preview file is re-exported in the background.</p>
-        <div class="quick">
-          <button id="qHold" title="Keep the box from just before the span">Keep previous box</button>
-          <button id="qNone" title="Black output for the span">No child here</button>
-          <button id="fDraw" title="Draw a fresh box on the original">Draw a box</button>
-          <button id="qClear" class="ghost" title="Clear the marked span">Clear span</button></div>
-        <details id="moreFix"><summary>Type the times or the box</summary>
-          <fieldset><legend>Span (seconds)</legend>
+    <div class="ed-main">
+      <div class="ed-tl" id="tlwrap" tabindex="0" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="${total.toFixed(1)}" aria-valuenow="0">
+        <div id="tlinner">
+          <div class="ruler" id="ruler"></div>
+          <div class="track strip" id="strip" title="Drag to mark a span; drag its edges to adjust" style="background-image:url(/api/jobs/${j.id}/strip)"><span class="tlabel">video</span><div id="range2"><i class="rh l"></i><i class="rh r"></i></div></div>
+          <div class="track crop" id="tl" title="Click or drag to move the playhead"><span class="tlabel">crop</span><div id="segs"></div></div>
+          <div class="track fixes" id="fixtrack"><span class="tlabel">fixes</span></div>
+          <div id="range"></div><div id="head"><i></i></div>
+        </div>
+      </div>
+      <aside class="ed-side">
+        <section class="pane"><h3>Spans to check <span class="muted" id="checkN"></span></h3>
+          <p class="desc">Pause there, then click the right tile on the original or drag the red box; the fix covers the marked span and saves itself. OK means the crop is right.</p>
+          <div id="revlist"></div></section>
+        <section class="pane" id="fixcard"><h3>Fixes</h3>
+          <div class="quick">
+            <button id="qHold" title="Keep the box from just before the span">Keep previous box</button>
+            <button id="qNone" title="Black output for the span">No child here</button>
+            <button id="fDraw" title="Draw a fresh box on the original">Draw a box</button>
+            <button id="qClear" class="ghost" title="Clear the marked span (Esc)">Clear span</button></div>
+          <details id="moreFix"><summary>Type the times or the box</summary>
             <div class="timegrid">
               <label for="fa">Start</label><input type="number" id="fa" step="0.05" min="0" max="${total.toFixed(2)}"><output id="faOut"></output><button id="faNow">Playhead</button>
               <label for="fb">End</label><input type="number" id="fb" step="0.05" min="0" max="${total.toFixed(2)}"><output id="fbOut"></output><button id="fbNow">Playhead</button>
-            </div></fieldset>
-          <fieldset><legend>Box</legend>
+            </div>
             <div class="boxrow" id="boxrow">
               <label for="bx">Left</label><input type="number" id="bx" step="2"><label for="by">Top</label><input type="number" id="by" step="2">
-              <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">pixels; height follows 16:9</span>
-              <button id="fAdd">Use this box for the span</button></div></fieldset>
-          <p class="ferr" id="fErr" role="alert"></p></details>
-        <ul class="ovs" id="ovs"></ul></section>
-    </div>`;
+              <label for="bw">Width</label><input type="number" id="bw" step="2" min="60"><span class="tip">px; height follows 16:9</span>
+              <button id="fAdd">Use this box for the span</button></div>
+            <p class="ferr" id="fErr" role="alert"></p></details>
+          <ul class="ovs" id="ovs"></ul></section>
+        <p class="keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> 1 s <kbd>,</kbd><kbd>.</kbd> frame <kbd>P</kbd><kbd>N</kbd> spans <kbd>I</kbd><kbd>O</kbd> mark span <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</p>
+      </aside>
+    </div></div>`;
 
   const vsrc = $("#vsrc"), vout = $("#vout"), ctx = vout.getContext("2d"), box = $("#box"), tl = $("#tl"), stripEl = $("#strip");
-  const tlayer = $("#tilelayer"), tctx = tlayer.getContext("2d");
+  const tlayer = $("#tilelayer"), tctx = tlayer.getContext("2d"), tlwrap = $("#tlwrap"), tlinner = $("#tlinner");
   const fa = $("#fa"), fb = $("#fb"), bx = $("#bx"), by = $("#by"), bw = $("#bw"), rect = $("#drawrect"), layer = $("#drawlayer");
   stopReview();  // never two live screens
   R = { jobId: j.id, d, alive: true, reviews: [], overrides: d.overrides.map(o => ({...o})), hist: [], redo: [], dirty: false, drawing: false, raf: 0, n: 0,
-        tiles: null, hover: null, hit: null, saveTimer: 0, saving: false, cur: () => vsrc.currentTime || 0 };
+        tiles: null, hover: null, hit: null, saveTimer: 0, saving: false, zoom: 1, cur: () => vsrc.currentTime || 0 };
   const cur = R.cur;
   const segAt = t => { const sg = R.d.segments; let lo = 0, hi = sg.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (sg[m].start <= t + 1e-4) lo = m; else hi = m - 1; } return sg[lo]; };
   // the box at time t with the fixes not yet saved laid over the timeline
@@ -672,15 +708,43 @@ async function showReview(j) {
   const toggle = () => { if (vsrc.paused) vsrc.play().catch(() => {}); else vsrc.pause(); };
   vsrc.addEventListener("play", () => { $("#play").textContent = "Pause"; box.classList.remove("editable"); });
   vsrc.addEventListener("pause", () => { $("#play").textContent = "Play"; box.classList.add("editable"); });
-  vsrc.addEventListener("error", () => toast("This browser cannot play the original's format, so the review screen cannot show it. The cropped result is not affected.", true));
-  vsrc.addEventListener("loadedmetadata", () => { if (keepT) seek(keepT); });
+  vsrc.addEventListener("error", () => { $("#loading").textContent = "This browser cannot play the recording. The cropped result is not affected."; });
+  vsrc.addEventListener("loadedmetadata", () => { $("#loading").hidden = true; if (keepT) seek(keepT); });
+  vsrc.addEventListener("loadeddata", () => { $("#loading").hidden = true; });
   box.classList.add("editable");
   $("#play").onclick = toggle;
   $("#rate").onchange = e => { vsrc.playbackRate = +e.target.value; };
   $("#exportOne").onclick = () => openExport(j.id);
   fetch(`/api/jobs/${j.id}/tiles`).then(r => r.ok ? r.json() : []).then(t => { if (R && R.jobId === j.id) R.tiles = t; }).catch(() => {});
 
-  // ----- marks on the timeline and the list of spans to check, rebuilt after every save -----
+  // ----- the timeline: zoomable, scrollable; ruler, filmstrip, crop blocks, fix clips -----
+  const pxPerSec = () => tlinner.clientWidth / total;
+  function drawRuler() {
+    const pps = pxPerSec(), steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    const step = steps.find(s => s * pps >= 70) || 600, minor = step / 5;
+    let html = "";
+    for (let t = 0; t <= total + 1e-6; t += minor) {
+      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      html += `<i class="${major ? "maj" : "min"}" style="left:${t / total * 100}%">${major ? `<b>${fmt(t)}</b>` : ""}</i>`;
+    }
+    $("#ruler").innerHTML = html;
+  }
+  function setZoom(z, anchorT) {
+    z = Math.max(1, Math.min(24, z));
+    const before = anchorT === undefined ? null : anchorT / total * tlinner.clientWidth - tlwrap.scrollLeft;
+    R.zoom = z; $("#zoom").value = z;
+    tlinner.style.width = (z * 100) + "%";
+    if (before !== null) tlwrap.scrollLeft = anchorT / total * tlinner.clientWidth - before;
+    drawRuler();
+  }
+  $("#zoom").oninput = e => setZoom(+e.target.value, cur());
+  tlwrap.addEventListener("wheel", e => {
+    if (e.ctrlKey) { e.preventDefault(); const r = tlwrap.getBoundingClientRect(); const t = (tlwrap.scrollLeft + e.clientX - r.left) / tlinner.clientWidth * total; setZoom(R.zoom * (e.deltaY < 0 ? 1.25 : 0.8), t); }
+    else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tlwrap.scrollLeft += e.deltaY; e.preventDefault(); }
+  }, {passive: false});
+  new ResizeObserver(drawRuler).observe(tlwrap);
+  drawRuler();
+
   function renderMarks() {
     const segs = R.d.segments, merged = [], reviews = [];
     for (const s of segs) {
@@ -697,20 +761,23 @@ async function showReview(j) {
     const secs = reviews.reduce((a, r) => a + r.end - r.start, 0), sm = R.d.summary || {};
     $("#segs").innerHTML = merged.map(m => `<div class="seg ${m.c}" style="left:${m.start / total * 100}%;width:${(m.end - m.start) / total * 100}%"></div>`).join("");
     $("#fVis").textContent = `${sm.visible_pct}%`; $("#fVis").className = sm.visible_pct < 99 ? "attn" : "";
-    $("#fMoves").textContent = sm.layout_changes;
-    $("#fCheck").textContent = `${plural(reviews.length, "span")}, ${secs.toFixed(1)} s`; $("#fCheck").className = reviews.length ? "attn" : "";
+    $("#fCheck").textContent = reviews.length ? `${reviews.length} · ${secs.toFixed(1)} s` : "none"; $("#fCheck").className = reviews.length ? "attn" : "";
+    $("#checkN").textContent = reviews.length ? `(${reviews.length})` : "";
     $("#prevFlag").disabled = $("#nextFlag").disabled = $("#only").disabled = !reviews.length;
-    // one card per span: what the crop looks like in the middle of it (the whole frame
-    // when there is no crop), so that a glance tells right from wrong
     for (const r of reviews) { const s = segs.find(s => s.start <= (r.start + r.end) / 2 && s.end > (r.start + r.end) / 2 && s.box) || segs.find(s => s.start >= r.start && s.start < r.end && s.box); r.box = s ? s.box : null; }
     $("#revlist").innerHTML = reviews.length ? `<div class="cards" id="reviews">${reviews.map((r, i) => `<div class="cardt ${r.c}" data-i="${i}">
         <canvas class="thumb" width="192" height="108" data-t="${((r.start + r.end) / 2).toFixed(3)}" data-box="${r.box ? r.box.join(",") : ""}" title="Click to jump there"></canvas>
         <div class="cmeta"><span class="chip ${r.c === "miss" ? "err" : "flag"}">${r.c === "miss" ? "No child" : "Check"}</span><span>${fmt(r.start)} – ${fmt(r.end)} · ${(r.end - r.start).toFixed(1)}s</span></div>
         <div class="why" title="${esc([...r.why].join("; "))}">${esc([...r.why].join("; "))}</div>
         <div class="cbtn"><button data-ok="${i}" title="The crop is right here; stop flagging it">OK</button><button class="primary" data-fix="${i}">Fix</button></div></div>`).join("")}</div>`
-      : `<p class="none">Nothing to check. It is still worth scrubbing through once before marking the video as reviewed.</p>`;
+      : `<p class="none">Nothing to check. Scrub through once before marking the video as reviewed.</p>`;
     loadThumbs();
+    drawFixTrack();
   }
+  function drawFixTrack() {
+    $("#fixtrack").innerHTML = `<span class="tlabel">fixes</span>` + R.overrides.map((o, i) => `<div class="clip ${o.mode === "ok" ? "okc" : ""} ${o.fresh ? "fresh" : ""}" data-fx="${i}" style="left:${o.start / total * 100}%;width:${Math.max(0.2, (o.end - o.start) / total * 100)}%" title="${fmt(o.start)} – ${fmt(o.end)}: ${ovText(o)}"></div>`).join("");
+  }
+  $("#fixtrack").addEventListener("click", e => { const c = e.target.closest("[data-fx]"); if (!c) return; const o = R.overrides[+c.dataset.fx]; vsrc.pause(); seek(o.start + 0.05); setRange(o.start, o.end); });
   // thumbnails are cut from a second, hidden copy of the video so that playback is not disturbed
   const vthumb = $("#vthumb");
   R.thumbCache = R.thumbCache || {};
@@ -741,11 +808,9 @@ async function showReview(j) {
     if (vthumb.readyState >= 1) next(); else vthumb.addEventListener("loadedmetadata", next, {once: true});
   }
   $("#revlist").addEventListener("click", e => {
-    const ok = e.target.closest("[data-ok]"), thumb = e.target.closest("canvas.thumb");
+    const ok = e.target.closest("[data-ok]"), thumb = e.target.closest("canvas.thumb"), fix = e.target.closest("[data-fix]");
     if (ok) { const r = R.reviews[+ok.dataset.ok]; if (!R.overrides.some(x => x.mode === "ok" && Math.abs(x.start - r.start) < 1e-3 && Math.abs(x.end - r.end) < 1e-3)) mutate(() => R.overrides.push({start: r.start, end: r.end, mode: "ok", fresh: true})); toast(`${fmt(r.start)} – ${fmt(r.end)} accepted. Ctrl+Z undoes it.`); return; }
     if (thumb) { vsrc.pause(); seek(+thumb.dataset.t); return; }
-    const fix = e.target.closest("[data-fix]"), go = e.target.closest(".jump");
-    if (go) seek(Math.max(0, R.reviews[+go.dataset.i].start - 0.5));
     if (fix) { const r = R.reviews[+fix.dataset.fix]; vsrc.pause(); seek(r.start + 0.05); setRange(r.start, r.end); toast("Span marked. Click the right tile on the original, or drag the red box."); }
   });
   renderMarks();
@@ -782,14 +847,18 @@ async function showReview(j) {
   function frame() {
     const t = cur();
     $("#cur").textContent = fmt(t);
-    $("#head").style.left = $("#head2").style.left = `calc(${t / total * 100}% - 1px)`;
+    $("#head").style.left = `${t / total * 100}%`;
+    if (!vsrc.paused) {  // keep the playhead in view while playing
+      const px = t / total * tlinner.clientWidth, w = tlwrap.clientWidth;
+      if (px < tlwrap.scrollLeft || px > tlwrap.scrollLeft + w - 20) tlwrap.scrollLeft = Math.max(0, px - w * 0.15);
+    }
     if (R.n++ % 30 === 0) {
-      tl.setAttribute("aria-valuenow", t.toFixed(1)); tl.setAttribute("aria-valuetext", fmt(t));
+      tlwrap.setAttribute("aria-valuenow", t.toFixed(1)); tlwrap.setAttribute("aria-valuetext", fmt(t));
       const jj = S.jobs.find(x => x.id === j.id), rs = $("#rstate");
-      if (rs) rs.innerHTML = jj?.rendering ? `<dt>Preview file</dt><dd class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</dd>`
-        : jj?.render_error ? `<dt>Preview file</dt><dd class="attn" title="${esc(jj.render_error)}">re-export failed (hover)</dd>`
-        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `<dt>Preview file</dt><dd class="attn">waiting to re-export</dd>`
-        : jj?.render?.audio === "dropped" ? `<dt>Audio</dt><dd class="attn">could not be kept</dd>` : "";
+      if (rs) rs.innerHTML = jj?.rendering ? `Preview file <b class="attn">re-exporting ${(jj.rendering.progress * 100).toFixed(0)}%</b>`
+        : jj?.render_error ? `Preview file <b class="attn" title="${esc(jj.render_error)}">re-export failed (hover)</b>`
+        : jj && jj.output_rev !== undefined && jj.output_rev !== jj.rev ? `Preview file <b class="attn">waiting to re-export</b>`
+        : jj?.render?.audio === "dropped" ? `Audio <b class="attn">could not be kept</b>` : "";
     }
     const e = R.boxDrag ? {box: R.boxDrag.box, manual: true} : effAt(t);
     if (!R.boxDrag) placeBox(e.box, e.manual);
@@ -808,15 +877,13 @@ async function showReview(j) {
   // ----- where a fix lands: the marked span, else the flagged span or segment under the playhead -----
   function targetSpan() {
     const t = cur();
-    // the marked span, as long as the playhead is inside it; a fix made elsewhere
-    // lands where the playhead is, not on a span marked earlier and forgotten
     if (fa.value !== "" && fb.value !== "" && +fb.value > +fa.value && t >= +fa.value - 0.05 && t <= +fb.value + 0.05) return [+fa.value, Math.min(+fb.value, total)];
     const r = R.reviews.find(r => t >= r.start - 0.05 && t <= r.end + 0.05), s = segAt(t);
     return r ? [r.start, r.end] : s ? [s.start, s.end] : [Math.max(0, t - 0.5), Math.min(total, t + 0.5)];
   }
   // set the crop for the target span: a box, {mode: "hold"} or null (no child)
   function setFix(what) {
-    const [a, b] = targetSpan(), t = cur();
+    const [a, b] = targetSpan();
     const o = Object.assign({start: a, end: b}, what === null ? {box: null} : what.mode ? {mode: "hold"} : {box: what});
     mutate(() => {
       const k = R.overrides.findIndex(x => x.mode !== "ok" && Math.abs(x.start - a) < 1e-3 && Math.abs(x.end - b) < 1e-3);
@@ -839,7 +906,7 @@ async function showReview(j) {
     if (tlayer.width !== W || tlayer.height !== H) { tlayer.width = W; tlayer.height = H; }
     tctx.clearRect(0, 0, W, H);
     R.hit = null;
-    if (R.drawing || R.boxDrag || !R.hover) return;  // outlines only while the mouse is over the picture
+    if (R.drawing || R.boxDrag || !R.hover) return;
     const kx = W / V.width, ky = H / V.height, [hx, hy] = R.hover;
     let hit = null;
     for (const tb of tilesAt(t)) {
@@ -851,16 +918,16 @@ async function showReview(j) {
     }
     R.hit = hit;
     if (hit) {
-      tctx.setLineDash([]); tctx.lineWidth = 3; tctx.strokeStyle = "#2a56c6";
+      tctx.setLineDash([]); tctx.lineWidth = 3; tctx.strokeStyle = "#3dd9c3";
       tctx.strokeRect(hit[0] * kx + 1.5, hit[1] * ky + 1.5, (hit[2] - hit[0]) * kx - 3, (hit[3] - hit[1]) * ky - 3);
-      tctx.fillStyle = "rgba(42,86,198,.15)"; tctx.fillRect(hit[0] * kx, hit[1] * ky, (hit[2] - hit[0]) * kx, (hit[3] - hit[1]) * ky);
+      tctx.fillStyle = "rgba(61,217,195,.15)"; tctx.fillRect(hit[0] * kx, hit[1] * ky, (hit[2] - hit[0]) * kx, (hit[3] - hit[1]) * ky);
     }
     tlayer.style.cursor = hit ? "pointer" : "default";
   }
   tlayer.addEventListener("pointermove", e => { const r = tlayer.getBoundingClientRect(); R.hover = [(e.clientX - r.left) / r.width * V.width, (e.clientY - r.top) / r.height * V.height]; });
   tlayer.addEventListener("pointerleave", () => { R.hover = null; });
   tlayer.addEventListener("click", () => {
-    if (!R.hit) { toggle(); return; }  // a click on the picture itself plays / pauses
+    if (!R.hit) { toggle(); return; }
     vsrc.pause();
     const [x0, y0, x1, y1] = R.hit;
     setFix([x0, y0, x1, y1]);
@@ -882,7 +949,7 @@ async function showReview(j) {
     const [x, y] = toVideo(e), dx = x - g.start[0], dy = y - g.start[1], [ox0, oy0, ox1, oy1] = g.orig;
     let b;
     if (!g.handle) b = [ox0 + dx, oy0 + dy, ox1 + dx, oy1 + dy];
-    else {  // the opposite corner stays put; the width follows the mouse, the height follows 16:9
+    else {
       const ax = g.handle.includes("w") ? ox1 : ox0, ay = g.handle.includes("n") ? oy1 : oy0;
       const w = Math.max(60, Math.abs(x - ax)), hh = w * 9 / 16;
       const x0 = g.handle.includes("w") ? ax - w : ax, y0 = g.handle.includes("n") ? ay - hh : ay;
@@ -911,30 +978,36 @@ async function showReview(j) {
   $("#faNow").onclick = () => { fa.value = cur().toFixed(2); showRange(); };
   $("#fbNow").onclick = () => { fb.value = cur().toFixed(2); showRange(); };
   $("#qClear").onclick = clearRange;
-  const barTime = (el, e) => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(total, (e.clientX - r.left) / r.width * total)); };
-  tl.addEventListener("pointerdown", e => { tl.setPointerCapture(e.pointerId); seek(barTime(tl, e)); });
+  const barTime = e => { const r = tlinner.getBoundingClientRect(); return Math.max(0, Math.min(total, (e.clientX - r.left) / r.width * total)); };
+  // ruler and crop track: scrub (one seek per animation frame)
   let scrubT = null;
-  tl.addEventListener("pointermove", e => { if (!tl.hasPointerCapture(e.pointerId)) return; const first = scrubT === null; scrubT = barTime(tl, e); if (first) requestAnimationFrame(() => { seek(scrubT); scrubT = null; }); });
+  const scrubStart = e => { tl.setPointerCapture(e.pointerId); seek(barTime(e)); };
+  const scrubMove = e => { if (!tl.hasPointerCapture(e.pointerId)) return; const first = scrubT === null; scrubT = barTime(e); if (first) requestAnimationFrame(() => { seek(scrubT); scrubT = null; }); };
+  tl.addEventListener("pointerdown", scrubStart); tl.addEventListener("pointermove", scrubMove);
+  $("#ruler").addEventListener("pointerdown", e => { seek(barTime(e)); });
   let drag = null;  // {a: anchor time, edge: "l" | "r" | null}
   stripEl.addEventListener("pointerdown", e => {
     stripEl.setPointerCapture(e.pointerId); vsrc.pause();
-    const t = barTime(stripEl, e), edge = e.target.classList.contains("rh") ? (e.target.classList.contains("l") ? "l" : "r") : null;
+    const t = barTime(e), edge = e.target.classList.contains("rh") ? (e.target.classList.contains("l") ? "l" : "r") : null;
     drag = edge ? {a: edge === "l" ? +fb.value : +fa.value, edge} : {a: t, edge: null};
     if (!edge) seek(t);
   });
-  stripEl.addEventListener("pointermove", e => { if (!drag) return; const t = barTime(stripEl, e); setRange(Math.min(drag.a, t), Math.max(drag.a, t)); seek(t); });
-  stripEl.addEventListener("pointerup", e => { if (!drag) return; const t = barTime(stripEl, e); if (!drag.edge && Math.abs(t - drag.a) < 0.05) { const [a, b] = targetSpanAt(t); setRange(a, b); } drag = null; seek(+fa.value || t); });
+  stripEl.addEventListener("pointermove", e => { if (!drag) return; const t = barTime(e); setRange(Math.min(drag.a, t), Math.max(drag.a, t)); seek(t); });
+  stripEl.addEventListener("pointerup", e => { if (!drag) return; const t = barTime(e); if (!drag.edge && Math.abs(t - drag.a) < 0.05) { const [a, b] = targetSpanAt(t); setRange(a, b); } drag = null; seek(+fa.value || t); });
   const targetSpanAt = t => { const r = R.reviews.find(r => t >= r.start - 0.05 && t <= r.end + 0.05), s = segAt(t); return r ? [r.start, r.end] : s ? [s.start, s.end] : [Math.max(0, t - 0.5), Math.min(total, t + 0.5)]; };
   const jump = dir => { const t = cur(); const r = dir > 0 ? R.reviews.find(r => r.start > t + 0.3) : [...R.reviews].reverse().find(r => r.start < t - 0.8); if (r) seek(r.start); };
   $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
+  const stepF = 1 / (V.fps || 25);
+  $("#stepB").onclick = () => { vsrc.pause(); seek(cur() - stepF); }; $("#stepF").onclick = () => { vsrc.pause(); seek(cur() + stepF); };
 
   // ----- fixes: list, undo / redo, autosave -----
-  const ovText = o => o.mode === "ok" ? "looked at, accepted" : o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]} at ${o.box[0]},${o.box[1]}` : "no child";
+  function ovText(o) { return o.mode === "ok" ? "looked at, accepted" : o.mode === "hold" ? "keep previous box" : o.box ? `box ${o.box[2] - o.box[0]}×${o.box[3] - o.box[1]} at ${o.box[0]},${o.box[1]}` : "no child"; }  // hoisted: used by renderMarks above
   function drawOvs() {
     $("#ovs").innerHTML = R.overrides.map((o, i) => `<li><span>${fmt(o.start)} – ${fmt(o.end)}</span><span>${ovText(o)}</span><span class="spacer"></span>
       <button class="ghost" data-go="${i}">Show</button><button class="ghost danger" data-rm="${i}" aria-label="Delete the fix from ${fmt(o.start)} to ${fmt(o.end)}">Delete</button></li>`).join("")
       || `<li class="none">No fixes yet.</li>`;
     $("#undo").disabled = !R.hist.length; $("#redo").disabled = !R.redo.length;
+    drawFixTrack();
   }
   const snap = () => JSON.stringify(R.overrides);
   const mutate = fn => { R.hist.push(snap()); R.redo = []; fn(); R.dirty = true; drawOvs(); scheduleSave(); };
@@ -1018,16 +1091,17 @@ async function showReview(j) {
     if (e.key === "Escape") { if (R.drawing) { start = null; setDraw(false); } else if (!/INPUT|SELECT|TEXTAREA/.test(tag)) clearRange(); return; }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "z" || k === "y") && !/INPUT|SELECT|TEXTAREA/.test(tag)) { e.preventDefault(); if (k === "z" && e.shiftKey || k === "y") redo(); else undo(); return; }
     if (/INPUT|SELECT|TEXTAREA/.test(tag) || e.ctrlKey || e.metaKey || e.altKey) return;
-    const step = 1 / (V.fps || 25);
     if (e.code === "Space") { if (tag === "BUTTON" || tag === "A") return; e.preventDefault(); toggle(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); seek(cur() - (e.shiftKey ? 5 : 1)); }
     else if (e.key === "ArrowRight") { e.preventDefault(); seek(cur() + (e.shiftKey ? 5 : 1)); }
-    else if (e.key === ",") { vsrc.pause(); seek(cur() - step); }
-    else if (e.key === ".") { vsrc.pause(); seek(cur() + step); }
+    else if (e.key === ",") { vsrc.pause(); seek(cur() - stepF); }
+    else if (e.key === ".") { vsrc.pause(); seek(cur() + stepF); }
     else if (k === "n") jump(1);
     else if (k === "p") jump(-1);
     else if (k === "i") { fa.value = cur().toFixed(2); if (fb.value !== "" && +fb.value <= +fa.value) fb.value = ""; showRange(); }
     else if (k === "o") { fb.value = cur().toFixed(2); if (fa.value === "" || +fa.value >= +fb.value) fa.value = Math.max(0, +fb.value - 1).toFixed(2); showRange(); }
+    else if (k === "=" || k === "+") setZoom(R.zoom * 1.25, cur());
+    else if (k === "-") setZoom(R.zoom * 0.8, cur());
   };
   document.addEventListener("keydown", R.onKey);
 }
