@@ -118,6 +118,9 @@ main:focus { outline: none; }
 .titlebar { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 30px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .titlebar h2 { margin: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .titlebar button { min-height: 22px; padding: 1px 8px; font-size: 12px; }
+.labelbox { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; margin-right: 4px; }
+.labelbox input { width: 90px; min-height: 22px; padding: 1px 6px; font-size: 12px; }
+.job .name small { font-size: 10.5px; }
 .who { color: var(--muted); font-size: 12px; } .who b { color: var(--text); }
 .notice { margin: 0; padding: 5px 10px; background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line); font-size: 12px; }
 .steps { padding-left: 18px; margin: 0 0 10px; } .steps li { margin: 3px 0; color: var(--muted); } .steps li.on { color: var(--text); font-weight: 600; } .steps li.past { color: var(--ok); }
@@ -420,7 +423,7 @@ function renderList() {
     else if (j.status === "choose") meta = "Waiting for you to pick the child";
     else if (j.status === "error") meta = j.error;
     return `<li><button class="job" data-id="${j.id}" ${j.id === S.sel ? `aria-current="true"` : ""} title="${esc(j.name)} · ${esc(label)}">
-      <span class="row"><i class="st ${cls}"></i><span class="name">${esc(j.name)}</span><span class="lbl">${esc(label)}</span></span>
+      <span class="row"><i class="st ${cls}"></i><span class="name">${esc(j.label || j.name)}${j.label ? ` <small class="muted">${esc(j.name)}</small>` : ""}</span><span class="lbl">${esc(label)}</span></span>
       ${meta ? `<span class="meta">${esc(meta)}</span>` : ""}${isBusy(j) ? `<span class="bar"><i style="width:${(j.progress * 100).toFixed(1)}%"></i></span>` : ""}</button></li>`;
   }).join("");
   const html = ups + rows || `<li class="listnone">${S.jobs.length ? "No videos in this group." : "No videos yet. Drop a recording above to start."}</li>`;
@@ -585,6 +588,11 @@ $("#main").addEventListener("click", e => {
     if (!confirm(`Remove "${j.name}" from the list?${lose}\nThe original video and anything you already exported are kept.`)) return;
     busy(b, async () => { await api(`/api/jobs/${j.id}`, {method: "DELETE"}); if (R) R.dirty = false; S.sel = null; await poll(); });
   } else if (act === "pick") { if (unsaved() && !confirm(UNSAVED)) return; S.picking = true; refreshMain(); }
+  else if (act === "clone") {
+    const label = prompt("Participant id for the second person in this recording (used to name the export), e.g. P096:", "");
+    if (label === null) return;
+    busy(b, async () => { const n = await api(`/api/jobs/${j.id}/clone`, {json: {label}}); toast("Added. Pick the other child."); await poll(); select(n.id); });
+  }
   else if (act === "cancelpick") { S.picking = false; refreshMain(); }
 });
 
@@ -605,7 +613,8 @@ async function showReview(j) {
   const V = d.video, total = V.duration;
   const keepT = R && R.jobId === j.id ? R.cur() : lastPos.id === j.id ? lastPos.t : 0;  // position survives a rebuild
   $("#main").innerHTML = `<div class="editor${S.noinspector ? " noinspector" : ""}">
-    ${head(j, `<button class="ghost" data-act="pick">Change person</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
+    ${head(j, `<label class="labelbox" title="Participant id used to name the exported files">Export as <input type="text" id="labelIn" value="${esc(j.label || "")}" placeholder="${esc(j.name.replace(/\.[^.]+$/, ""))}" maxlength="40"></label>
+      <button class="ghost" data-act="pick">Change person</button><button class="ghost" data-act="clone" title="Crop a second participant out of this same recording">Another person…</button><button id="mark"></button><button id="exportOne">Export…</button>`)}
     ${d.notice_text ? `<p class="notice" role="status">${esc(d.notice_text)} If it is not, click Change person.</p>` : ""}
     <video id="vthumb" muted preload="auto" src="/api/jobs/${j.id}/source" hidden aria-hidden="true"></video>
     <div class="ed-left">
@@ -712,6 +721,7 @@ async function showReview(j) {
   $("#play").onclick = toggle;
   $("#rate").onchange = e => { vsrc.playbackRate = +e.target.value; };
   $("#exportOne").onclick = () => openExport(j.id);
+  $("#labelIn").onchange = e => api(`/api/jobs/${j.id}/label`, {json: {label: e.target.value}}).then(r => { j.label = r.label; renderList(); toast(r.label ? `Exports as ${r.label}_child.mp4` : "Exports under the file's name."); }).catch(err => toast(err.message, true));
   fetch(`/api/jobs/${j.id}/tiles`).then(r => r.ok ? r.json() : []).then(t => { if (R && R.jobId === j.id) R.tiles = t; }).catch(() => {});
 
   // ----- the timeline: zoomable, scrollable; ruler, filmstrip, crop blocks, fix clips -----

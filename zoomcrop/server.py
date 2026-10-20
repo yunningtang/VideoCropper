@@ -163,7 +163,7 @@ def read_json(path: Path):
 def new_job(src: Path, origin: str) -> dict:
     job = {
         "id": uuid.uuid4().hex[:10], "name": src.name if origin == "path" else src.name.split("_", 1)[1],
-        "src": str(src), "origin": origin, "status": "queued", "progress": 0.0, "error": "",
+        "label": "", "src": str(src), "origin": origin, "status": "queued", "progress": 0.0, "error": "",
         "created": time.time(), "child_pid": None, "child_name": "", "participants": [],
         "video": None, "summary": None, "output": "", "overrides": [], "rev": 0, "took": {},
         "reviewed": False, "started": None, "exported": None, "render": None, "notice": "",
@@ -283,6 +283,18 @@ def other_people(job: dict) -> set[int]:
             and (p.get("face") or timeline.is_experimenter(p, settings["experimenters"]))}
 
 
+def child_like_experimenter(job: dict) -> bool:
+    """Does the face of the person about to be cropped match a remembered experimenter?
+    A child mistaken for an experimenter would otherwise be excluded silently and the
+    experimenter cropped instead; this is checked before the child's vectors are dropped."""
+    vectors = faces_of(job["id"]).get(job.get("child_pid")) or []
+    known = [e for e in settings["known_faces"] if e.get("model") == FaceReader.MODEL and e.get("vectors")]
+    if not vectors or not known:
+        return False
+    votes = sum(1 for v in vectors if max(max(_cos(v, k) for k in e["vectors"]) for e in known) >= FACE_SAME)
+    return votes >= FACE_MIN_VOTES
+
+
 def settle(job: dict, queue_render: bool = True) -> bool:
     """Decide who to crop without asking, if the rule allows it; queue the render then."""
     d = timeline.decide(job["participants"], settings["experimenters"])
@@ -290,6 +302,8 @@ def settle(job: dict, queue_render: bool = True) -> bool:
     if d["pid"] is None:
         return False
     job["child_pid"] = d["pid"]
+    if child_like_experimenter(job):
+        job["notice"] = (job["notice"] + " child_like_experimenter").strip()
     if link_named_faces(job):
         save_settings()
     drop_child_faces(job)
@@ -466,7 +480,7 @@ def public(job: dict, full: bool = False) -> dict:
     everything, so that 400 queued videos do not make every poll megabytes."""
     keys = ("id", "name", "origin", "status", "progress", "error", "child_pid", "child_name",
             "video", "summary", "rev", "took", "created", "src",
-            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error")
+            "reviewed", "started", "exported", "notice", "cached", "attempt", "rendering", "output_rev", "render_error", "label")
     out = {k: job.get(k) for k in keys}
     out["n_overrides"] = len(job.get("overrides") or [])
     if full or job["status"] == "choose":
@@ -585,6 +599,8 @@ async def choose_child(jid: str, request: Request):
                 if p["id"] == fpid:
                     p["experimenter"], p["name"] = True, str(item.get("name", "")).strip() or p["name"]
         link_named_faces(job)  # a named experimenter's face goes with the name
+        if child_like_experimenter(job):
+            job["notice"] = "child_like_experimenter"
         drop_child_faces(job)
         save_settings()
         enqueue(job, "render")
@@ -653,6 +669,46 @@ async def set_overrides(jid: str, request: Request):
     return out
 
 
+@app.post("/api/jobs/{jid}/label")
+async def set_label(jid: str, request: Request):
+    """The participant id used to name the exported files (defaults to the file's stem)."""
+    job = get_job(jid)
+    body = await request.json()
+    label = "".join(ch for ch in str(body.get("label", "")).strip() if ch not in '\\/:*?"<>|')[:60]
+    with lock:
+        job["label"] = label
+        save_job(job)
+    return public(job)
+
+
+@app.post("/api/jobs/{jid}/clone")
+async def clone_job(jid: str, request: Request):
+    """A second person to crop out of the same recording (two participants in one Zoom
+    session): a new job that reuses this one's analysis and asks who to crop."""
+    job = get_job(jid)
+    body = await request.json()
+    jdir = JOBDIR / jid
+    if job["status"] not in ("done", "choose") or not (jdir / "analysis.json").exists():
+        raise HTTPException(409, "Finish this video's analysis first.")
+    new = {
+        "id": uuid.uuid4().hex[:10], "name": job["name"], "label": str(body.get("label", "")).strip()[:60],
+        "src": job["src"], "origin": "clone", "status": "choose", "progress": 1.0, "error": "",
+        "created": time.time(), "child_pid": None, "child_name": "", "participants": json.loads(json.dumps(job["participants"])),
+        "video": job["video"], "summary": None, "output": "", "overrides": [], "rev": 0, "took": dict(job.get("took") or {}),
+        "reviewed": False, "started": None, "exported": None, "render": None, "notice": "", "cached": True,
+    }
+    ndir = JOBDIR / new["id"]
+    ndir.mkdir(parents=True, exist_ok=True)
+    for f in jdir.iterdir():
+        if f.name == "analysis.json" or (f.suffix == ".jpg" and f.name.startswith("p")) or f.name == "strip.jpg":
+            shutil.copyfile(f, ndir / f.name)
+    with lock:
+        jobs[new["id"]] = new
+        cancels[new["id"]] = threading.Event()
+        save_job(new)
+    return public(new, full=True)
+
+
 @app.post("/api/jobs/{jid}/reviewed")
 async def set_reviewed(jid: str, request: Request):
     job = get_job(jid)
@@ -672,11 +728,11 @@ def summary_text(rows: list[tuple[dict, str]]) -> str:
     """One row per video, for keeping track of a batch (opens in Excel)."""
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["video", "cropped_person", "duration_s", "visible_pct", "missing_s", "review_spans",
+    w.writerow(["participant", "video", "cropped_person", "duration_s", "visible_pct", "missing_s", "review_spans",
                 "review_s", "window_changes", "manual_fixes", "reviewed", "exported_file"])
     for j, fname in rows:
         sm = j.get("summary") or {}
-        w.writerow([j["name"], j.get("child_name", ""), sm.get("duration", ""), sm.get("visible_pct", ""),
+        w.writerow([j.get("label") or Path(j["name"]).stem, j["name"], j.get("child_name", ""), sm.get("duration", ""), sm.get("visible_pct", ""),
                     sm.get("missing_s", ""), sm.get("review_n", ""), sm.get("review_s", ""),
                     sm.get("layout_changes", ""), len(j.get("overrides") or []),
                     "yes" if j.get("reviewed") else "no", fname])
@@ -727,8 +783,8 @@ async def export(request: Request):
     plan: list[tuple[dict, str, Path]] = []
     stems: dict[str, int] = {}
     rows = []
-    for j in sorted(chosen, key=lambda j: j["name"]):
-        stem = Path(j["name"]).stem
+    for j in sorted(chosen, key=lambda j: (j.get("label") or j["name"])):
+        stem = j.get("label") or Path(j["name"]).stem
         stems[stem] = stems.get(stem, 0) + 1
         if stems[stem] > 1:  # two sources with the same file name
             stem = f"{stem}_{stems[stem]}"
@@ -829,7 +885,7 @@ def delete_job(jid: str):
         if not (JOBDIR / jid).exists():
             break
         time.sleep(0.3)
-    if job["origin"] == "upload":
+    if job["origin"] == "upload" and not any(j["src"] == job["src"] for j in jobs.values()):
         src = Path(job["src"])
         if src.parent == UPLOADS:
             for _ in range(20):  # a worker may still hold the file for a moment

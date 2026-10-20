@@ -46,6 +46,8 @@ NOTICE_TEXT = {
                        "was taken to be the child. Check that the cropped window is the child's.",
     "extra_people": "Other short-lived people were found and ignored. Check the spans where the child "
                     "is marked as not on screen.",
+    "child_like_experimenter": "The person being cropped looks like a remembered experimenter. Make sure the "
+                               "cropped window is the child's, not the experimenter's.",
 }
 
 
