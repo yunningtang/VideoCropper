@@ -331,9 +331,9 @@ async function busy(btn, fn) {
 }
 
 const S = { jobs: [], settings: {}, sel: null, shown: "", uploads: [], picking: false, filter: "all", clock: 0 };
-const REVIEW = new Set(["filled", "held", "unsure", "look", "camera_off"]);
+// which spans deserve a look is decided by the server (segment.review): doubtful runs of at least half a second
 const UNSAVED = "You have manual fixes that are not applied yet. They will be lost if you leave. Leave anyway?";
-const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "missing" ? "miss" : s.flags.some(f => REVIEW.has(f)) ? "warn" : "ok";
+const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "missing" ? "miss" : s.review ? "warn" : "ok";
 const isBusy = j => j.status === "analyzing" || j.status === "rendering";
 const GROUPS = {
   all: ["All", () => true],

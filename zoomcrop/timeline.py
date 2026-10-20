@@ -34,7 +34,8 @@ FLAG_TEXT = {
     "camera_off": "Camera may be off",
     "manual": "Set by hand",
 }
-REVIEW_FLAGS = ("filled", "held", "unsure", "look", "camera_off")
+REVIEW_FLAGS = ("held", "unsure", "look", "camera_off")  # "filled" (a sub-second gap bridged with the box before it) is noted, not reviewed
+MIN_REVIEW = 0.5  # s: doubtful spans shorter than this, in a row, are not worth a look
 SPLIT_FLAGS = {"held", "unsure", "inferred", "look", "camera_off"}  # a segment holds one of these states, not a mix
 
 NOTICE_TEXT = {
@@ -251,7 +252,25 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
             continue
         flags = sorted(s["flags"])
         out.append({"start": round(s["start"], 4), "end": round(s["end"], 4), "box": s["box"], "cut": s.get("cut"),
-                    "status": "ok" if s["box"] is not None else "missing", "flags": flags})
+                    "status": "ok" if s["box"] is not None else "missing", "flags": flags, "review": False})
+    # What a person should look at: spans without the child, and doubtful spans that add
+    # up to at least MIN_REVIEW seconds in a row. A blink of a few frames where the box
+    # was held or inferred makes no difference to anyone coding behaviour.
+    i = 0
+    while i < len(out):
+        doubtful = out[i]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[i]["flags"])
+        if not doubtful:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(out) and (out[j]["status"] == "missing" or any(f in REVIEW_FLAGS for f in out[j]["flags"])) \
+                and out[j]["start"] - out[j - 1]["end"] < 0.3:
+            j += 1
+        run = out[i:j]
+        if any(s["status"] == "missing" for s in run) or sum(s["end"] - s["start"] for s in run) >= MIN_REVIEW:
+            for s in run:
+                s["review"] = True
+        i = j
     return out
 
 
@@ -317,7 +336,7 @@ def _apply_override(segs, ov):
 def summarize(segments: list[dict]) -> dict:
     total = sum(s["end"] - s["start"] for s in segments) or 1e-6
     visible = sum(s["end"] - s["start"] for s in segments if s["box"] is not None)
-    review = [s for s in segments if s["status"] == "missing" or any(f in s["flags"] for f in REVIEW_FLAGS)]
+    review = [s for s in segments if s.get("review", s["status"] == "missing")]
     boxes = [s["box"] for s in segments if s["box"] is not None]
     changes = sum(1 for a, b in zip(boxes, boxes[1:]) if a != b)
     return {
