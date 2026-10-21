@@ -143,6 +143,21 @@ def load_state():
             enqueue(job, "analyze")
         elif job["status"] == "rendering":
             enqueue(job, "render")
+        elif job["status"] == "done" and job.get("tl_version") != timeline.VERSION and job.get("child_pid") is not None                 and (JOBDIR / job["id"] / "analysis.json").exists():
+            # the timeline rules changed since this video was finished: rebuild its segments from
+            # the analysis (seconds) and refresh the preview file; nothing is analysed again
+            try:
+                analysis = read_json(JOBDIR / job["id"] / "analysis.json")
+                segs = timeline.build(analysis, job["child_pid"], job["overrides"], other_people(job))
+                (JOBDIR / job["id"] / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
+                job["summary"] = timeline.summarize(segs)
+                job["tl_version"] = timeline.VERSION
+                job["rev"] += 1
+                job["rerender_queued"] = True
+                tasks.put((job["id"], "rerender"))
+                save_job(job)
+            except Exception:
+                traceback.print_exc()
         elif job["status"] == "done" and job.get("output_rev", job["rev"]) != job["rev"]:
             job["rerender_queued"] = True  # a fix was saved but its preview file never got made
             tasks.put((job["id"], "rerender"))
@@ -428,6 +443,7 @@ def worker():
                         except OSError:
                             pass  # still being played; removed with the job, or by the next render
                 (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
+                job["tl_version"] = timeline.VERSION
                 set_status(job, "done", progress=1.0, summary=timeline.summarize(segs), output=str(out),
                            render=info, rev=job["rev"] + 1, output_rev=job["rev"] + 1, reviewed=False)
             if task == "rerender":
@@ -679,6 +695,7 @@ async def set_overrides(jid: str, request: Request):
         job["summary"] = timeline.summarize(segs)
         job["reviewed"] = False
         (jdir / "segments.json").write_text(json.dumps(segs), encoding="utf-8")
+        job["tl_version"] = timeline.VERSION
         if not job.get("rerender_queued"):  # fixes arrive every few seconds; one render follows them
             job["rerender_queued"] = True
             tasks.put((jid, "rerender"))

@@ -16,6 +16,14 @@ from .detect import iou
 
 GROUP_TOL = 5      # px at 1080p: box jitter below this is the same layout
 SAME_IOU = 0.85    # ... or boxes overlapping this much: two measurements of one window (loose model box, snapped edges)
+VERSION = 2        # bumped when the rules here change: finished videos get their timeline rebuilt at start-up
+GLIDE_STEP = 1.0   # s: a segment shorter than this whose window moved on by the next one is a step of a drag
+
+
+def _shift(a, b) -> float:
+    """How far the centre moved between two boxes (px). Two measurements of one window
+    differ in size, not in place; a window being dragged keeps its size and moves."""
+    return max(abs((a[0] + a[2]) - (b[0] + b[2])), abs((a[1] + a[3]) - (b[1] + b[3]))) / 2
 FILL_SAME = 1.5    # s: bridge a detection gap this short when the box is unchanged across it
 FILL_ANY = 0.6     # s: bridge a gap this short even if the box changed (avoids black flashes)
 MIN_AUTO_SHARE = 0.2  # a person must be on screen this much of the video to be cropped without asking
@@ -216,7 +224,10 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
                 same = last["box"] is None
             elif last["box"] is not None:
                 ref = np.median(np.array(cur_boxes), axis=0)
-                same = bool(np.abs(ref - np.array(box)).max() <= tol) or iou([float(v) for v in ref], box) >= SAME_IOU
+                refb = [float(v) for v in ref]
+                # a loose box is the same window; a box that moved on is a window being dragged,
+                # and the output has to follow it frame by frame rather than in steps
+                same = bool(np.abs(ref - np.array(box)).max() <= tol) or (iou(refb, box) >= SAME_IOU and _shift(refb, box) <= 2 * tol)
             # a moment the pipeline was unsure about must not stretch over the whole
             # span of the same box: cut the segment where the review marks change
             if same and (flags & SPLIT_FLAGS) != (last["flags"] & SPLIT_FLAGS):
@@ -299,6 +310,15 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
                 if s["review"] and s["start"] < ov["end"] - 1e-6 and s["end"] > ov["start"] + 1e-6:
                     s["review"] = False
                     s["flags"] = sorted(set(s["flags"]) | {"checked"})
+    # A window being dragged is sampled every few frames; between two samples the crop
+    # slides from one box to the next ("to") instead of jumping, so the output keeps up.
+    for s, n in zip(out, out[1:]):
+        a, b = s["box"], n["box"]
+        if not a or not b or "manual" in s["flags"] or "manual" in n["flags"] or s["end"] - s["start"] > GLIDE_STEP:
+            continue
+        w, h = a[2] - a[0], a[3] - a[1]
+        if abs((b[2] - b[0]) - w) <= 0.06 * w and abs((b[3] - b[1]) - h) <= 0.06 * h and tol < _shift(a, b) <= 0.5 * w:
+            s["to"] = list(b)
     return out
 
 
@@ -316,7 +336,7 @@ def _settle(segs, tol):
         j = i + 1
         while j < len(segs) and segs[j]["box"] is not None and \
                 (max(abs(p - q) for p, q in zip(segs[j - 1]["box"], segs[j]["box"])) <= tol
-                 or iou(segs[i]["box"], segs[j]["box"]) >= SAME_IOU):  # anchored to the run's start: no drifting chains
+                 or (iou(segs[i]["box"], segs[j]["box"]) >= SAME_IOU and _shift(segs[i]["box"], segs[j]["box"]) <= tol)):  # anchored to the run's start: no drifting chains
             j += 1
         run = segs[i:j]
         box = list(max(run, key=lambda s: s["end"] - s["start"])["box"])

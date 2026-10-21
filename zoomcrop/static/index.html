@@ -711,9 +711,11 @@ async function showReview(j) {
   const cur = R.cur;
   const segAt = t => { const sg = R.d.segments; let lo = 0, hi = sg.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (sg[m].start <= t + 1e-4) lo = m; else hi = m - 1; } return sg[lo]; };
   // the box at time t with the fixes not yet saved laid over the timeline
+  // a dragged window slides from the segment's box to the next one ("to") over the segment
+  const boxIn = (s, t) => { if (!s.box || !s.to) return s.box; const f = Math.min(1, Math.max(0, (t - s.start) / Math.max(1e-6, s.end - s.start))); return s.box.map((a, i) => Math.round(a + (s.to[i] - a) * f)); };
   function effAt(t, upto = R.overrides.length) {
     const s = segAt(t);
-    let out = s ? {box: s.box, flags: s.flags, manual: s.flags.includes("manual")} : {box: null, flags: [], manual: false};
+    let out = s ? {box: boxIn(s, t), flags: s.flags, manual: s.flags.includes("manual")} : {box: null, flags: [], manual: false};
     for (let k = 0; k < upto; k++) {
       const o = R.overrides[k];
       if (!o.fresh || o.mode === "ok" || t < o.start || t >= o.end) continue;  // saved fixes are already in the segments; "ok" changes no box

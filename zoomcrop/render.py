@@ -122,6 +122,12 @@ def render(src: str | Path, dst: str | Path, segments: list[dict], out_h: int = 
                 while si + 1 < len(segments) and t >= segments[si + 1]["start"] - 1e-3:
                     si += 1
                 plan = plans[si] if segments else None
+                seg = segments[si] if segments else None
+                if seg is not None and seg.get("to") and seg["box"]:
+                    # a step of a drag: slide the crop from this box to the next one
+                    f = min(1.0, max(0.0, (t - seg["start"]) / max(1e-6, seg["end"] - seg["start"])))
+                    b = [int(round(a + (c - a) * f)) for a, c in zip(seg["box"], seg["to"])]
+                    plan = _plan(b, W, H, out_w, out_h, inset, seg.get("cut"))
                 buf = black.copy()
                 if plan is not None:
                     if frame.format.name != "yuv420p" or frame.width % 2 or frame.height % 2:

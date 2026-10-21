@@ -84,7 +84,8 @@ Keyboard shortcuts in the review screen: Space play/pause, ← → 1 s (Shift: 5
 | `crop_summary.csv` | One row per exported video: visible share, spans to check, manual fixes, reviewed or not. |
 
 Spans without the child are black in the output; so is the part of a tile that was
-dragged off-screen (the picture keeps its position).
+dragged off-screen (the picture keeps its position). While a window is being dragged the
+crop slides with it between the analysed moments instead of jumping in steps.
 
 ## How it works
 
