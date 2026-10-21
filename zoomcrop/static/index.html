@@ -87,6 +87,7 @@ main:focus { outline: none; }
 .filters button[aria-pressed=true] { color: var(--text); border-bottom-color: var(--accent); background: none; }
 .overall { padding: 3px 10px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); min-height: 20px; }
 .batchsel { margin: 4px 8px 0; width: calc(100% - 16px); font-size: 11.5px; min-height: 22px; }
+.search { margin: 4px 8px 0; width: calc(100% - 16px); font-size: 11.5px; min-height: 22px; padding: 1px 6px; }
 .jobs { overflow: auto; flex: 1; list-style: none; margin: 0; padding: 0; }
 .job { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 3px 8px 3px 10px; min-height: 0; color: var(--text); border-bottom: 1px solid #262626; border-left: 2px solid transparent; }
 .job:hover:not(:disabled) { background: var(--panel2); border-color: #262626; }
@@ -300,6 +301,7 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
     </div>
     <div class="filters" id="filters" role="group" aria-label="Filter videos"></div>
     <select id="batchSel" class="batchsel" aria-label="Batch" hidden></select>
+    <input type="search" id="search" class="search" placeholder="Search: P395, name, batch…" aria-label="Search videos" autocomplete="off">
     <div class="overall" id="overall" role="status"></div>
     <ul class="jobs" id="jobs"></ul>
   </aside>
@@ -368,7 +370,7 @@ async function busy(btn, fn) {
   finally { if (btn.isConnected) { btn.disabled = false; btn.removeAttribute("aria-busy"); } }
 }
 
-const S = { jobs: [], settings: {}, sel: null, shown: "", uploads: [], picking: false, filter: "all", batch: "", clock: 0 };
+const S = { jobs: [], settings: {}, sel: null, shown: "", uploads: [], picking: false, filter: "all", batch: "", q: "", clock: 0 };
 // which spans deserve a look is decided by the server (segment.review): doubtful runs of at least half a second
 const UNSAVED = "You have manual fixes that are not applied yet. They will be lost if you leave. Leave anyway?";
 const segClass = s => s.flags.includes("manual") ? "manual" : s.status === "missing" ? "miss" : s.review ? "warn" : "ok";
@@ -424,7 +426,10 @@ function renderList() {
   const batches = [...new Set(S.jobs.map(j => j.batch).filter(Boolean))].sort();
   const bsel = $("#batchSel");
   if (bsel.dataset.list !== batches.join("|")) { bsel.dataset.list = batches.join("|"); bsel.innerHTML = `<option value="">All batches</option>` + batches.map(b => `<option value="${esc(b)}" ${S.batch === b ? "selected" : ""}>${esc(b)}</option>`).join(""); bsel.hidden = !batches.length; }
-  const shown = S.jobs.filter(GROUPS[S.filter][1]).filter(j => !S.batch || j.batch === S.batch);
+  // search: every word must appear in the file name, export label, batch or cropped person
+  const words = S.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = j => `${j.name} ${j.label || ""} ${j.batch || ""} ${j.child_name || ""}`.toLowerCase();
+  const shown = S.jobs.filter(GROUPS[S.filter][1]).filter(j => !S.batch || j.batch === S.batch).filter(j => !words.length || words.every(w => hay(j).includes(w)));
   const rows = shown.map(j => {
     const [label, cls] = chip(j);
     let meta = "";
@@ -436,7 +441,7 @@ function renderList() {
       <span class="row"><i class="st ${cls}"></i><span class="name">${esc(j.label || j.name)}${j.label ? ` <small class="muted">${esc(j.name)}</small>` : ""}</span><span class="lbl">${j.batch && !S.batch ? `${esc(j.batch)} · ` : ""}${esc(label)}</span></span>
       ${meta ? `<span class="meta">${esc(meta)}</span>` : ""}${isBusy(j) ? `<span class="bar"><i style="width:${(j.progress * 100).toFixed(1)}%"></i></span>` : ""}</button></li>`;
   }).join("");
-  const html = ups + rows || `<li class="listnone">${S.jobs.length ? "No videos in this group." : "No videos yet. Drop a recording above to start."}</li>`;
+  const html = ups + rows || `<li class="listnone">${S.jobs.length ? (words.length ? `Nothing matches "${esc(S.q)}" here.` : "No videos in this group.") : "No videos yet. Drop a recording above to start."}</li>`;
   const el = $("#jobs");
   if (el.dataset.html === html) return;
   const focused = document.activeElement?.closest?.(".job")?.dataset.id;  // keep keyboard focus across re-renders
@@ -446,6 +451,8 @@ function renderList() {
 $("#jobs").addEventListener("click", e => { const j = e.target.closest(".job[data-id]"); if (j) select(j.dataset.id); });
 $("#filters").addEventListener("click", e => { const b = e.target.closest("[data-f]"); if (b) { S.filter = b.dataset.f; renderList(); } });
 $("#batchSel").onchange = e => { S.batch = e.target.value; renderList(); };
+$("#search").addEventListener("input", e => { S.q = e.target.value.trim(); renderList(); });
+$("#search").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; S.q = ""; renderList(); e.target.blur(); } if (e.key === "Enter") { const first = $("#jobs .job[data-id]"); if (first) select(first.dataset.id); } });
 
 const unsaved = () => false;  // fixes save on their own
 function select(id) {
