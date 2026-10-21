@@ -39,8 +39,9 @@ window to quit.
 4. To fix a span: pause where the crop is wrong and click the child's window on the
    original. The window's edges are measured in that very frame and the fix follows that
    window forward until it moves away or disappears (press O at an earlier point to stop
-   it there); it is saved at once and the preview re-exported in the background. A newer
-   fix replaces older ones on the same moments. The red box can also be dragged, or a corner pulled; "No child here"
+   it there, or drag either end of the fix on the Fixes track); it is saved at once and
+   the preview re-exported in the background. A newer fix replaces older ones on the same
+   moments. The red box can also be dragged, or a corner pulled; "No child here"
    and "Keep previous box" cover the other cases, and I / O mark a span of your own.
 5. Click Reviewed, next video to move on to the next unreviewed video.
 6. Results stay in the tool's own workspace until you click Export… and choose which

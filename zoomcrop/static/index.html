@@ -225,6 +225,10 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
 .track.fixes .clip.okc { background: var(--ok-fill); }
 .track.fixes .clip.fresh { outline: 1px dashed #fff; }
 .track.fixes .clip:hover { filter: brightness(1.2); }
+.track.fixes .clip .e { position: absolute; top: -4px; bottom: -4px; width: 9px; cursor: ew-resize; }
+.track.fixes .clip .e.l { left: -4px; } .track.fixes .clip .e.r { right: -4px; }
+.track.fixes .clip .e::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 3px; width: 2px; background: rgba(255,255,255,.6); opacity: 0; }
+.track.fixes .clip:hover .e::after { opacity: 1; }
 .track.review { height: 18px; background: #161616; border-bottom: 0; }
 .track.review .rseg { position: absolute; top: 4px; bottom: 4px; min-width: 2px; background: var(--warn-fill); }
 .track.review .rseg.miss { background: repeating-linear-gradient(45deg, var(--bad-fill) 0 3px, var(--bad-fill2) 3px 6px); }
@@ -801,9 +805,39 @@ async function showReview(j) {
       <p class="desc">${hint}</p>`;
   }
   function drawFixTrack() {
-    $("#fixtrack").innerHTML = R.overrides.map((o, i) => `<div class="clip ${o.mode === "ok" ? "okc" : ""} ${o.fresh ? "fresh" : ""}" data-fx="${i}" style="left:${o.start / total * 100}%;width:${Math.max(0.2, (o.end - o.start) / total * 100)}%" title="${fmt(o.start)} – ${fmt(o.end)}: ${ovText(o)}"></div>`).join("");
+    $("#fixtrack").innerHTML = R.overrides.map((o, i) => `<div class="clip ${o.mode === "ok" ? "okc" : ""} ${o.fresh ? "fresh" : ""}" data-fx="${i}" style="left:${o.start / total * 100}%;width:${Math.max(0.2, (o.end - o.start) / total * 100)}%" title="${fmt(o.start)} – ${fmt(o.end)}: ${ovText(o)}. Drag an end to change how far it reaches."><i class="e l"></i><i class="e r"></i></div>`).join("");
   }
-  $("#fixtrack").addEventListener("click", e => { const c = e.target.closest("[data-fx]"); if (!c) return; const o = R.overrides[+c.dataset.fx]; vsrc.pause(); seek(o.start + 0.05); setRange(o.start, o.end); });
+  // Drag either end of a fix on the Fixes track to change how far it reaches (as a clip in a
+  // video editor). Growing over other fixes trims them: the one being dragged wins.
+  let fxDrag = null;
+  $("#fixtrack").addEventListener("pointerdown", e => {
+    const h = e.target.closest(".e"), c = e.target.closest("[data-fx]"); if (!h || !c) return;
+    e.preventDefault(); e.stopPropagation(); vsrc.pause();
+    const i = +c.dataset.fx, o = R.overrides[i];
+    fxDrag = {i, edge: h.classList.contains("l") ? "l" : "r", before: snap(), o0: {start: o.start, end: o.end}, moved: false};
+    $("#fixtrack").setPointerCapture(e.pointerId);
+  });
+  $("#fixtrack").addEventListener("pointermove", e => {
+    if (!fxDrag) return;
+    const o = R.overrides[fxDrag.i], t = barTime(e);
+    if (fxDrag.edge === "l") o.start = Math.max(0, Math.min(t, o.end - 0.1)); else o.end = Math.min(total, Math.max(t, o.start + 0.1));
+    fxDrag.moved = true; drawFixTrack(); setRange(o.start, o.end); seek(fxDrag.edge === "l" ? o.start : Math.max(0, o.end - 0.04));
+  });
+  const endFxDrag = () => {
+    if (!fxDrag) return;
+    const {i, before, o0, moved} = fxDrag; fxDrag = null;
+    if (!moved) return;
+    const o = R.overrides[i];
+    R.hist.push(before); R.redo = [];
+    // the dragged fix wins over whatever it now covers
+    const a = Math.min(o.start, o0.start), b = Math.max(o.end, o0.end);
+    R.overrides = R.overrides.flatMap(x => x === o || x.mode === "ok" || x.end <= o.start + 0.02 || x.start >= o.end - 0.02 ? [x]
+      : [x.start < o.start - 0.02 ? {...x, end: o.start} : null, x.end > o.end + 0.02 ? {...x, start: o.end} : null].filter(Boolean));
+    R.followed = null; R.dirty = true; drawOvs(); scheduleSave();
+    toast(`Fix now ${fmt(o.start)} – ${fmt(o.end)}. Ctrl+Z undoes it.`);
+  };
+  $("#fixtrack").addEventListener("pointerup", endFxDrag); $("#fixtrack").addEventListener("pointercancel", endFxDrag);
+  $("#fixtrack").addEventListener("click", e => { if (e.target.closest(".e")) return; const c = e.target.closest("[data-fx]"); if (!c) return; const o = R.overrides[+c.dataset.fx]; vsrc.pause(); seek(o.start + 0.05); setRange(o.start, o.end); });
   // thumbnails are cut from a second, hidden copy of the video so that playback is not disturbed
   const vthumb = $("#vthumb");
   R.thumbCache = R.thumbCache || {};
