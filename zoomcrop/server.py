@@ -808,8 +808,11 @@ async def export(request: Request):
                   and jobs[i].get("output") and Path(jobs[i]["output"]).exists()]
     if not chosen:
         raise HTTPException(400, "None of the selected videos has a finished result to export.")
+    # videos whose preview file is still being remade (after a fix, or a rules update) are
+    # left for a later export rather than holding up the ones that are ready
     behind = [j["name"] for j in chosen if j.get("rendering") or j.get("output_rev", j["rev"]) != j["rev"]]
-    if behind:
+    chosen = [j for j in chosen if not (j.get("rendering") or j.get("output_rev", j["rev"]) != j["rev"])]
+    if not chosen:
         raise HTTPException(409, "The preview file is still being re-exported after a manual fix for: "
                                  f"{', '.join(behind[:4])}{'…' if len(behind) > 4 else ''}. Try again in a minute.")
     if not any(want.get(k) for k in ("video", "segments", "report", "summary")):
@@ -875,7 +878,7 @@ async def export(request: Request):
             save_job(j)
         settings["export_dir"] = str(dest)
         save_settings()
-    return {"videos": len(chosen), "files": len(targets), "dir": str(dest)}
+    return {"videos": len(chosen), "files": len(targets), "dir": str(dest), "behind": behind}
 
 
 @app.post("/api/open_folder")

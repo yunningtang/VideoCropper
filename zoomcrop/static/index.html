@@ -340,7 +340,7 @@ kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--line2); border-r
     <div class="actions"><button id="eCancel">Cancel</button><button class="primary" id="eGo">Export</button></div>
   </div>
   <div id="eDone" hidden>
-    <p id="eDoneText"></p>
+    <p id="eDoneText" style="white-space:pre-line"></p>
     <div class="actions"><button id="eOpen">Open folder</button><button class="primary" id="eClose">Done</button></div>
   </div>
 </dialog>
@@ -1385,7 +1385,10 @@ $("#eGo").onclick = () => busy($("#eGo"), async () => {
       if (!confirm(`${plural(r.n_conflicts, "file")} with the same name already exist in that folder:\n\n${r.conflicts.join("\n")}${more}\n\nReplace them?`)) return;
       r = await api("/api/export", {json: {...req, overwrite: true}});
     }
-    $("#eDoneText").textContent = `Saved ${plural(r.videos, "video")} (${plural(r.files, "file")}) to ${r.dir}`;
+    $("#eDoneText").textContent = `Saved ${plural(r.videos, "video")} (${plural(r.files, "file")}) to ${r.dir}`
+      + (r.behind?.length ? `
+
+${plural(r.behind.length, "video")} not saved yet: the preview file is still being re-exported (${r.behind.slice(0, 4).join(", ")}${r.behind.length > 4 ? ", …" : ""}). Export again in a few minutes; they stay in "Reviewed videos not exported yet".` : "");
     $("#eOpen").onclick = () => busy($("#eOpen"), () => api("/api/open_folder", {json: {path: r.dir}}));
     $("#eForm").hidden = true; $("#eDone").hidden = false; $("#eClose").focus();
     await poll(); S.shown = unsaved() ? S.shown : ""; refreshMain();
