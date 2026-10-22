@@ -94,9 +94,9 @@ class TaskQueue(queue.PriorityQueue):
     _n = 0
 
     def put(self, item, block=True, timeout=None):
-        jid, task = item
+        jid, task, *urgent = item  # (jid, task) or (jid, task, True): wanted right now (an export is waiting)
         TaskQueue._n += 1
-        super().put((0 if task in ("render", "rerender") else 1, TaskQueue._n, jid, task), block, timeout)
+        super().put((-1 if urgent and urgent[0] else 0 if task in ("render", "rerender") else 1, TaskQueue._n, jid, task), block, timeout)
 
     def get(self, block=True, timeout=None):
         _, _, jid, task = super().get(block, timeout)
@@ -454,6 +454,9 @@ def worker():
                     tasks.put((jid, task))  # one render per video at a time
                     time.sleep(1)
                     continue
+                if job.get("output_rev") == job["rev"] and Path(job.get("output") or "").exists():
+                    job["rerender_queued"] = False
+                    continue  # already up to date (queued twice: once by a fix, once by an export)
                 job["rerender_queued"] = False
                 segs = read_json(jdir / "segments.json")
                 rev = job["rev"]
@@ -811,6 +814,11 @@ async def export(request: Request):
     # videos whose preview file is still being remade (after a fix, or a rules update) are
     # left for a later export rather than holding up the ones that are ready
     behind = [j["name"] for j in chosen if j.get("rendering") or j.get("output_rev", j["rev"]) != j["rev"]]
+    with lock:  # the ones an export is waiting for go to the front of the queue
+        for j in chosen:
+            if j.get("output_rev", j["rev"]) != j["rev"] and not j.get("rendering"):
+                j["rerender_queued"] = True
+                tasks.put((j["id"], "rerender", True))
     chosen = [j for j in chosen if not (j.get("rendering") or j.get("output_rev", j["rev"]) != j["rev"])]
     if not chosen:
         raise HTTPException(409, "The preview file is still being re-exported after a manual fix for: "
