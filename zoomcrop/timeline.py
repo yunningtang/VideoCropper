@@ -16,8 +16,9 @@ from .detect import iou
 
 GROUP_TOL = 5      # px at 1080p: box jitter below this is the same layout
 SAME_IOU = 0.85    # ... or boxes overlapping this much: two measurements of one window (loose model box, snapped edges)
-VERSION = 2        # bumped when the rules here change: finished videos get their timeline rebuilt at start-up
+VERSION = 3        # bumped when the rules here change: finished videos get their timeline rebuilt at start-up
 GLIDE_STEP = 1.0   # s: a segment shorter than this whose window moved on by the next one is a step of a drag
+SWAP_MAX = 1.0     # s: the box jumps elsewhere for at most this long and comes back: a momentary mix-up, steadied
 
 
 def _shift(a, b) -> float:
@@ -42,6 +43,7 @@ FLAG_TEXT = {
     "look": "Name label not visible; identified by appearance",
     "clipped": "Tile partly off-screen",
     "camera_off": "Camera may be off",
+    "steadied": "Jumped elsewhere for a moment and came straight back; the surrounding box is kept",
     "manual": "Set by hand",
     "checked": "Looked at and accepted",
 }
@@ -268,6 +270,18 @@ def build(analysis: dict, pid: int, overrides: list[dict] | None = None,
         elif nxt is not None and nxt["box"] is not None and gap <= FILL_ANY:
             s["box"] = list(prev["box"])
             s["flags"] = {"filled"}
+
+    # A box that jumps elsewhere for a moment and comes straight back (two people's windows
+    # mixed up for a few frames while Zoom redraws) is steadied to the box on both sides.
+    for i in range(1, len(segs) - 1):
+        s, p, n = segs[i], segs[i - 1], segs[i + 1]
+        if s["box"] is None or p["box"] is None or n["box"] is None or s["end"] - s["start"] > SWAP_MAX:
+            continue
+        w = p["box"][2] - p["box"][0]
+        if iou(p["box"], n["box"]) >= SAME_IOU and _shift(p["box"], n["box"]) <= 2 * tol                 and (iou(p["box"], s["box"]) < 0.3 or _shift(p["box"], s["box"]) > 0.25 * w):
+            s["box"] = list(p["box"])
+            s["cut"] = p.get("cut")
+            s["flags"] = {"steadied"}
 
     segs = _merge(_settle(segs, 2 * tol))
     for s in segs:

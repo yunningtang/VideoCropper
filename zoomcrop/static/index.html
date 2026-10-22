@@ -828,8 +828,8 @@ async function showReview(j) {
   });
   $("#fixtrack").addEventListener("pointermove", e => {
     if (!fxDrag) return;
-    const o = R.overrides[fxDrag.i], t = barTime(e);
-    if (fxDrag.edge === "l") o.start = Math.max(0, Math.min(t, o.end - 0.1)); else o.end = Math.min(total, Math.max(t, o.start + 0.1));
+    const o = R.overrides[fxDrag.i], t = toFrame(barTime(e));  // ends land on frame boundaries
+    if (fxDrag.edge === "l") o.start = Math.max(0, Math.min(t, o.end - stepF)); else o.end = Math.min(total, Math.max(t, o.start + stepF));
     fxDrag.moved = true; drawFixTrack(); setRange(o.start, o.end); seek(fxDrag.edge === "l" ? o.start : Math.max(0, o.end - 0.04));
   });
   const endFxDrag = () => {
@@ -843,7 +843,7 @@ async function showReview(j) {
     R.overrides = R.overrides.flatMap(x => x === o || x.mode === "ok" || x.end <= o.start + 0.02 || x.start >= o.end - 0.02 ? [x]
       : [x.start < o.start - 0.02 ? {...x, end: o.start} : null, x.end > o.end + 0.02 ? {...x, start: o.end} : null].filter(Boolean));
     R.followed = null; R.dirty = true; drawOvs(); scheduleSave();
-    toast(`Fix now ${fmt(o.start)} – ${fmt(o.end)}. Ctrl+Z undoes it.`);
+    toast(`Fix now ${fmt(o.start)} – ${fmt(o.end)} (frames ${frameNo(o.start)} – ${frameNo(o.end) - 1}). Ctrl+Z undoes it.`);
   };
   $("#fixtrack").addEventListener("pointerup", endFxDrag); $("#fixtrack").addEventListener("pointercancel", endFxDrag);
   $("#fixtrack").addEventListener("click", e => { if (e.target.closest(".e")) return; const c = e.target.closest("[data-fx]"); if (!c) return; const o = R.overrides[+c.dataset.fx]; vsrc.pause(); seek(o.start + 0.05); setRange(o.start, o.end); });
@@ -1162,6 +1162,7 @@ async function showReview(j) {
   const jump = dir => { const t = cur(); const r = dir > 0 ? R.reviews.find(r => r.start > t + 0.3) : [...R.reviews].reverse().find(r => r.start < t - 0.8); if (r) seek(r.start); };
   $("#nextFlag").onclick = () => jump(1); $("#prevFlag").onclick = () => jump(-1);
   const stepF = 1 / (V.fps || 25);
+  const toFrame = t => Math.round(t / stepF) * stepF, frameNo = t => Math.round(t / stepF);
   $("#stepB").onclick = () => { vsrc.pause(); seek(cur() - stepF); }; $("#stepF").onclick = () => { vsrc.pause(); seek(cur() + stepF); };
 
   // ----- fixes: list, undo / redo, autosave -----
